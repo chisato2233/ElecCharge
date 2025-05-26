@@ -16,7 +16,10 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
+from charging import admin_views
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('api/config/parameters', admin_views.get_system_parameters, name='get_parameters'),
+    path('api/admin/config/parameters', admin_views.update_system_parameters, name='update_parameters'),
 ]

@@ -1,12 +1,4 @@
 
-```
-Private URL -- 开发过程可以使用此url
-- backend: bubbly-generosity.railway.internal
-```
-
-
-根据您的需求文档，我来为您生成完整的REST API文档。这个API文档将涵盖电动车充电站管理系统的所有功能需求。
-
 # 电动车充电站管理系统 REST API 文档
 
 ## 基础信息
@@ -692,6 +684,4 @@ ws://bubbly-generosity.railway.internal/ws/updates
 }
 ```
 
----
 
-这个API文档涵盖了您需求中的所有功能点，包括用户管理、充电请求、排队机制、计费、管理员功能和报表统计。您可以根据实际开发进度调整具体的实现细节。
