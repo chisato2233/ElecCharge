@@ -1,0 +1,349 @@
+<!-- backend/templates/home.html -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EV充电站管理系统 - 系统状态</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+        
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            padding: 30px;
+        }
+        
+        .status-card {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 25px;
+            border-left: 5px solid #4CAF50;
+            transition: transform 0.3s ease;
+        }
+        
+        .status-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        }
+        
+        .status-card h3 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+        
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .status-item:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+        
+        .status-label {
+            font-weight: 500;
+            color: #666;
+        }
+        
+        .status-value {
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .status-online {
+            color: #4CAF50;
+        }
+        
+        .status-offline {
+            color: #f44336;
+        }
+        
+        .api-endpoints {
+            background: #f8f9fa;
+            padding: 30px;
+            border-top: 1px solid #eee;
+        }
+        
+        .api-endpoints h3 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+        }
+        
+        .endpoint-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+        
+        .endpoint-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+            transition: all 0.3s ease;
+        }
+        
+        .endpoint-item:hover {
+            border-color: #4CAF50;
+            box-shadow: 0 5px 15px rgba(76, 175, 80, 0.2);
+        }
+        
+        .endpoint-method {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        
+        .method-get { background: #4CAF50; color: white; }
+        .method-post { background: #2196F3; color: white; }
+        .method-put { background: #FF9800; color: white; }
+        .method-delete { background: #f44336; color: white; }
+        
+        .endpoint-url {
+            font-family: 'Courier New', monospace;
+            color: #666;
+            font-size: 0.9em;
+        }
+        
+        .refresh-btn {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            font-size: 1.5em;
+            cursor: pointer;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            transition: all 0.3s ease;
+        }
+        
+        .refresh-btn:hover {
+            background: #45a049;
+            transform: scale(1.1);
+        }
+        
+        .last-updated {
+            text-align: center;
+            color: #666;
+            font-size: 0.9em;
+            padding: 20px;
+            border-top: 1px solid #eee;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        
+        .loading {
+            animation: pulse 1.5s infinite;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔋 EV充电站管理系统</h1>
+            <p>系统状态监控面板</p>
+        </div>
+        
+        <div class="status-grid">
+            <div class="status-card">
+                <h3>🖥️ 系统状态</h3>
+                <div class="status-item">
+                    <span class="status-label">服务状态</span>
+                    <span class="status-value status-online" id="service-status">● 在线</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Django版本</span>
+                    <span class="status-value" id="django-version">{{ django_version }}</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Python版本</span>
+                    <span class="status-value" id="python-version">{{ python_version }}</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">调试模式</span>
+                    <span class="status-value" id="debug-mode">{{ debug_mode }}</span>
+                </div>
+            </div>
+            
+            <div class="status-card">
+                <h3>🗄️ 数据库状态</h3>
+                <div class="status-item">
+                    <span class="status-label">连接状态</span>
+                    <span class="status-value" id="db-status">{{ db_status }}</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">数据库类型</span>
+                    <span class="status-value" id="db-engine">{{ db_engine }}</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">数据库名</span>
+                    <span class="status-value" id="db-name">{{ db_name }}</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">用户数量</span>
+                    <span class="status-value" id="user-count">{{ user_count }}</span>
+                </div>
+            </div>
+            
+            <div class="status-card">
+                <h3>⚡ 充电站状态</h3>
+                <div class="status-item">
+                    <span class="status-label">快充桩数量</span>
+                    <span class="status-value" id="fast-piles">{{ fast_piles_count }}</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">慢充桩数量</span>
+                    <span class="status-value" id="slow-piles">{{ slow_piles_count }}</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">等候区容量</span>
+                    <span class="status-value" id="waiting-area">{{ waiting_area_size }}</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">当前排队</span>
+                    <span class="status-value" id="current-queue">{{ current_queue_count }}</span>
+                </div>
+            </div>
+            
+            <div class="status-card">
+                <h3>📊 实时统计</h3>
+                <div class="status-item">
+                    <span class="status-label">今日充电次数</span>
+                    <span class="status-value" id="today-sessions">{{ today_sessions }}</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">活跃用户</span>
+                    <span class="status-value" id="active-users">{{ active_users }}</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">系统运行时间</span>
+                    <span class="status-value" id="uptime">{{ uptime }}</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">最后更新</span>
+                    <span class="status-value" id="last-update">{{ last_update }}</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="api-endpoints">
+            <h3>🔗 API接口列表</h3>
+            <div class="endpoint-list">
+                <div class="endpoint-item">
+                    <span class="endpoint-method method-get">GET</span>
+                    <span class="endpoint-url">/</span>
+                    <div>系统首页</div>
+                </div>
+                <div class="endpoint-item">
+                    <span class="endpoint-method method-get">GET</span>
+                    <span class="endpoint-url">/health/</span>
+                    <div>健康检查</div>
+                </div>
+                <div class="endpoint-item">
+                    <span class="endpoint-method method-post">POST</span>
+                    <span class="endpoint-url">/api/auth/register</span>
+                    <div>用户注册</div>
+                </div>
+                <div class="endpoint-item">
+                    <span class="endpoint-method method-post">POST</span>
+                    <span class="endpoint-url">/api/auth/login</span>
+                    <div>用户登录</div>
+                </div>
+                <div class="endpoint-item">
+                    <span class="endpoint-method method-post">POST</span>
+                    <span class="endpoint-url">/api/auth/logout</span>
+                    <div>用户登出</div>
+                </div>
+                <div class="endpoint-item">
+                    <span class="endpoint-method method-get">GET</span>
+                    <span class="endpoint-url">/api/auth/profile</span>
+                    <div>用户信息</div>
+                </div>
+                <div class="endpoint-item">
+                    <span class="endpoint-method method-get">GET</span>
+                    <span class="endpoint-url">/admin/</span>
+                    <div>管理后台</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="last-updated">
+            页面加载时间: <span id="page-load-time">{{ current_time }}</span>
+        </div>
+    </div>
+    
+    <button class="refresh-btn" onclick="location.reload()" title="刷新页面">
+        🔄
+    </button>
+    
+    <script>
+        // 自动刷新页面
+        setInterval(() => {
+            const now = new Date();
+            document.getElementById('page-load-time').textContent = now.toLocaleString('zh-CN');
+        }, 1000);
+        
+        // 每30秒自动刷新一次
+        setTimeout(() => {
+            location.reload();
+        }, 30000);
+    </script>
+</body>
+</html>
