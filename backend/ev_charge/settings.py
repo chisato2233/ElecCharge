@@ -88,7 +88,9 @@ DATABASES = {
     }
 }
 
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "changeme")
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError("DJANGO_SECRET_KEY environment variable must be set")
 DEBUG = os.getenv("DEBUG", "True") == "True"
 ALLOWED_HOSTS = ["*",]
 
