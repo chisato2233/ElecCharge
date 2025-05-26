@@ -1,0 +1,17 @@
+{
+    "services": [
+      {
+        "name": "backend",
+        "source": "backend",
+        "dockerfilePath": "backend/Dockerfile"
+      },
+      {
+        "name": "frontend",
+        "source": "frontend",
+        "buildCommand": "npm install && npm run build",
+        "startCommand": "npm run start",
+        "rootDirectory": "frontend"
+      }
+    ]
+  }
+  
