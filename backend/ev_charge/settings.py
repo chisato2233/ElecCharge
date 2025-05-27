@@ -102,7 +102,35 @@ SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
 if not SECRET_KEY:
     raise ValueError("DJANGO_SECRET_KEY environment variable must be set")
 DEBUG = os.getenv("DEBUG", "True") == "True"
-ALLOWED_HOSTS = ["*",]
+
+# CSRF配置
+CSRF_TRUSTED_ORIGINS = [
+    'https://*.railway.app',
+    'https://elecharge-backend.up.railway.app',  # 替换为您的实际域名
+    'http://localhost:8000',  # 本地开发
+]
+
+# 如果您有自定义域名，也要添加
+# CSRF_TRUSTED_ORIGINS.append('https://your-custom-domain.com')
+
+# 允许的主机
+ALLOWED_HOSTS = [
+    '*',  # 开发环境可以用*，生产环境建议指定具体域名
+    'elecharge-backend.up.railway.app',  # 您的Railway域名
+    'localhost',
+    '127.0.0.1',
+]
+
+# 如果是生产环境，建议更严格的配置
+if not DEBUG:
+    ALLOWED_HOSTS = [
+        'elecharge-backend.up.railway.app',  # 您的实际域名
+        # 'your-custom-domain.com',  # 如果有自定义域名
+    ]
+    CSRF_TRUSTED_ORIGINS = [
+        'https://elecharge-backend.up.railway.app',
+        # 'https://your-custom-domain.com',
+    ]
 
 
 # Password validation
