@@ -12,8 +12,7 @@ services:
       - db_data:/var/lib/mysql
 
   web:
-    build: ./backend    # 见下方 Dockerfile
-    command: gunicorn ev_charge.wsgi:application --bind 0.0.0.0:8000
+    build: ./backend
     volumes:
       - ./backend:/app
     ports:
