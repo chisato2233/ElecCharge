@@ -2,7 +2,7 @@ from charging.utils.config_manager import get_config
 from django.utils import timezone
 from django.db import transaction
 from decimal import Decimal
-from ..models import ChargingRequest, ChargingPile, SystemParameter, Notification
+from .models import ChargingRequest, ChargingPile, SystemParameter, Notification
 import logging
 
 logger = logging.getLogger(__name__)
@@ -13,9 +13,9 @@ class ChargingQueueService:
     def can_join_queue(self):
         """检查是否可以加入排队"""
         try:
-            waiting_area_size = int(SystemParameter.objects.get(
-                key='WaitingAreaSize'
-            ).value)
+            waiting_area_size = SystemParameter.objects.get(
+                param_key='WaitingAreaSize'
+            ).get_value()
             current_waiting = ChargingRequest.objects.filter(
                 current_status='waiting'
             ).count()
@@ -67,7 +67,7 @@ class ChargingQueueService:
             pile.save()
             
             # 创建充电会话
-            from ..models import ChargingSession
+            from .models import ChargingSession
             ChargingSession.objects.create(
                 request=charging_request,
                 pile=pile,
@@ -145,6 +145,6 @@ class BillingService:
     def _get_parameter(self, key, default):
         """获取系统参数"""
         try:
-            return SystemParameter.objects.get(key=key).value
+            return SystemParameter.objects.get(param_key=key).get_value()
         except SystemParameter.DoesNotExist:
             return default

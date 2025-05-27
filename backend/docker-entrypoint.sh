@@ -24,6 +24,9 @@ python manage.py makemigrations
 echo "🔄 执行数据库迁移..."
 python manage.py migrate
 
+echo "🔄 初始化系统参数..."
+python manage.py init_system
+
 echo "👤 创建超级用户(如果不存在)..."
 python manage.py shell -c "
 from accounts.models import User;
