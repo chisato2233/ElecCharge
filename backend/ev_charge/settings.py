@@ -129,12 +129,12 @@ else:
 if RAILWAY_ENVIRONMENT:
     # Railway环境 - 私有网络通信
     CORS_ALLOWED_ORIGINS = [
-        "http://forntend.railway.internal:3000",     # 前端私有地址
-        "https://your-frontend-domain.up.railway.app", # 前端公网地址
+        "https://forntend.railway.internal:3000",     # 前端私有地址
+        "https://elecharge.up.railway.app", # 前端公网地址
     ]
     
     CORS_ALLOWED_ORIGIN_REGEXES = [
-        r"^http://.*\.railway\.internal$",  # 允许所有Railway内部域名
+        r"^https://.*\.railway\.internal$",  # 允许所有Railway内部域名
     ]
 else:
     # 本地开发环境
@@ -146,8 +146,8 @@ else:
 # 🛡️ CSRF配置
 if RAILWAY_ENVIRONMENT:
     CSRF_TRUSTED_ORIGINS = [
-        'http://forntend.railway.internal:3000',
-        'http://bubbly-generosity.railway.internal:8000',
+        'https://forntend.railway.internal:3000',
+        'https://bubbly-generosity.railway.internal:8000',
         'https://elecharge-backend.up.railway.app',
         'https://elecharge.up.railway.app',
     ]
