@@ -1,12 +1,15 @@
 from django.shortcuts import render
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
 from django.contrib.auth import login, logout
-from .serializers import UserRegistrationSerializer, UserLoginSerializer, UserSerializer
-from .models import User
+from .serializers import (
+    UserRegistrationSerializer, UserLoginSerializer, UserSerializer,
+    VehicleSerializer, VehicleCreateSerializer
+)
+from .models import User, Vehicle
 
 # Create your views here.
 
@@ -14,9 +17,11 @@ from .models import User
 @permission_classes([AllowAny])
 def register(request):
     """
-    用户注册
-    POST /api/auth/register
+    用户注册 - 只需要基本信息
+    POST /api/auth/register/
     """
+    print(f"📥 收到注册请求数据: {request.data}")
+    
     serializer = UserRegistrationSerializer(data=request.data)
     
     if serializer.is_valid():
@@ -32,11 +37,13 @@ def register(request):
                 'data': {
                     'user_id': user.id,
                     'username': user.username,
+                    'email': user.email,
                     'token': token.key
                 }
             }, status=status.HTTP_201_CREATED)
             
         except Exception as e:
+            print(f"❌ 注册异常: {e}")
             return Response({
                 'success': False,
                 'error': {
@@ -46,6 +53,7 @@ def register(request):
                 }
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
+    print(f"❌ 序列化器验证失败: {serializer.errors}")
     return Response({
         'success': False,
         'error': {
@@ -124,10 +132,7 @@ def user_logout(request):
 
 @api_view(['GET'])
 def get_user_profile(request):
-    """
-    获取用户信息
-    GET /api/auth/profile
-    """
+    """获取用户信息（包含车辆列表）"""
     serializer = UserSerializer(request.user)
     return Response({
         'success': True,
@@ -158,3 +163,115 @@ def update_user_profile(request):
             'details': serializer.errors
         }
     }, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def vehicle_list(request):
+    """
+    获取用户车辆列表 / 添加新车辆
+    GET /api/auth/vehicles/
+    POST /api/auth/vehicles/
+    """
+    if request.method == 'GET':
+        vehicles = Vehicle.objects.filter(user=request.user)
+        serializer = VehicleSerializer(vehicles, many=True)
+        return Response({
+            'success': True,
+            'data': serializer.data
+        })
+    
+    elif request.method == 'POST':
+        serializer = VehicleCreateSerializer(
+            data=request.data, 
+            context={'request': request}
+        )
+        
+        if serializer.is_valid():
+            vehicle = serializer.save()
+            return Response({
+                'success': True,
+                'message': '车辆添加成功',
+                'data': VehicleSerializer(vehicle).data
+            }, status=status.HTTP_201_CREATED)
+        
+        return Response({
+            'success': False,
+            'error': {
+                'code': 'VALIDATION_ERROR',
+                'message': '数据验证失败',
+                'details': serializer.errors
+            }
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET', 'PUT', 'DELETE'])
+@permission_classes([IsAuthenticated])
+def vehicle_detail(request, vehicle_id):
+    """
+    获取/更新/删除特定车辆
+    GET /api/auth/vehicles/{id}/
+    PUT /api/auth/vehicles/{id}/
+    DELETE /api/auth/vehicles/{id}/
+    """
+    try:
+        vehicle = Vehicle.objects.get(id=vehicle_id, user=request.user)
+    except Vehicle.DoesNotExist:
+        return Response({
+            'success': False,
+            'error': '车辆不存在'
+        }, status=status.HTTP_404_NOT_FOUND)
+    
+    if request.method == 'GET':
+        serializer = VehicleSerializer(vehicle)
+        return Response({
+            'success': True,
+            'data': serializer.data
+        })
+    
+    elif request.method == 'PUT':
+        serializer = VehicleSerializer(
+            vehicle, 
+            data=request.data, 
+            partial=True,
+            context={'request': request}
+        )
+        
+        if serializer.is_valid():
+            # 如果设置为默认车辆，先取消其他车辆的默认状态
+            if serializer.validated_data.get('is_default', False):
+                Vehicle.objects.filter(
+                    user=request.user, 
+                    is_default=True
+                ).exclude(id=vehicle.id).update(is_default=False)
+            
+            vehicle = serializer.save()
+            return Response({
+                'success': True,
+                'message': '车辆信息更新成功',
+                'data': VehicleSerializer(vehicle).data
+            })
+        
+        return Response({
+            'success': False,
+            'error': {
+                'code': 'VALIDATION_ERROR',
+                'message': '数据验证失败',
+                'details': serializer.errors
+            }
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    elif request.method == 'DELETE':
+        # 如果删除的是默认车辆，需要设置新的默认车辆
+        if vehicle.is_default:
+            other_vehicle = Vehicle.objects.filter(
+                user=request.user
+            ).exclude(id=vehicle.id).first()
+            
+            if other_vehicle:
+                other_vehicle.is_default = True
+                other_vehicle.save()
+        
+        vehicle.delete()
+        return Response({
+            'success': True,
+            'message': '车辆删除成功'
+        })

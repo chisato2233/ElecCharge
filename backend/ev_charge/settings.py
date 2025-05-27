@@ -44,9 +44,11 @@ INSTALLED_APPS = [
     "accounts",
     "charging",
     "reports",
+    'corsheaders',
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -101,37 +103,91 @@ DATABASES = {
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
 if not SECRET_KEY:
     raise ValueError("DJANGO_SECRET_KEY environment variable must be set")
-DEBUG = os.getenv("DEBUG", "True") == "True"
+DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
+RAILWAY_ENVIRONMENT = os.getenv('RAILWAY_ENVIRONMENT')
 
-# CSRF配置
-CSRF_TRUSTED_ORIGINS = [
-    'https://*.railway.app',
-    'https://elecharge-backend.up.railway.app',  # 替换为您的实际域名
-    'http://localhost:8000',  # 本地开发
-]
-
-# 如果您有自定义域名，也要添加
-# CSRF_TRUSTED_ORIGINS.append('https://your-custom-domain.com')
-
-# 允许的主机
-ALLOWED_HOSTS = [
-    '*',  # 开发环境可以用*，生产环境建议指定具体域名
-    'elecharge-backend.up.railway.app',  # 您的Railway域名
-    'localhost',
-    '127.0.0.1',
-]
-
-# 如果是生产环境，建议更严格的配置
-if not DEBUG:
+# 🌐 ALLOWED_HOSTS配置
+if RAILWAY_ENVIRONMENT:
+    # Railway环境
     ALLOWED_HOSTS = [
-        'elecharge-backend.up.railway.app',  # 您的实际域名
-        # 'your-custom-domain.com',  # 如果有自定义域名
+        'bubbly-generosity.railway.internal',  # 私有网络地址
+        'elecharge-backend.up.railway.app',    # 公网地址
+        '.railway.app',
+        'localhost',
+        '127.0.0.1',
     ]
-    CSRF_TRUSTED_ORIGINS = [
-        'https://elecharge-backend.up.railway.app',
-        # 'https://your-custom-domain.com',
+else:
+    # 本地开发环境
+    ALLOWED_HOSTS = [
+        'localhost',
+        '127.0.0.1',
+        '0.0.0.0',
+        '*',
     ]
 
+# 🔗 CORS配置
+if RAILWAY_ENVIRONMENT:
+    # Railway环境 - 私有网络通信
+    CORS_ALLOWED_ORIGINS = [
+        "http://forntend.railway.internal:3000",     # 前端私有地址
+        "https://your-frontend-domain.up.railway.app", # 前端公网地址
+    ]
+    
+    CORS_ALLOWED_ORIGIN_REGEXES = [
+        r"^http://.*\.railway\.internal$",  # 允许所有Railway内部域名
+    ]
+else:
+    # 本地开发环境
+    CORS_ALLOWED_ORIGINS = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+
+# 🛡️ CSRF配置
+if RAILWAY_ENVIRONMENT:
+    CSRF_TRUSTED_ORIGINS = [
+        'http://forntend.railway.internal:3000',
+        'http://bubbly-generosity.railway.internal:8000',
+        'https://elecharge-backend.up.railway.app',
+        'https://elecharge.up.railway.app',
+    ]
+else:
+    CSRF_TRUSTED_ORIGINS = [
+        'http://localhost:3000',
+        'http://localhost:8000',
+        'http://127.0.0.1:3000',
+        'http://127.0.0.1:8000',
+    ]
+
+# 🔧 CORS详细配置
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+
+# Railway特定配置
+if RAILWAY_ENVIRONMENT:
+    # 信任Railway的代理
+    USE_X_FORWARDED_HOST = True
+    USE_X_FORWARDED_PORT = True
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 # Password validation
 # https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators
@@ -216,3 +272,6 @@ REST_FRAMEWORK = {
 # 可选：自定义配置
 X_FRAME_OPTIONS = "SAMEORIGIN"
 SILENCED_SYSTEM_CHECKS = ["security.W019"]
+
+# 添加这个设置，Django会自动将无斜杠的URL重定向到有斜杠的URL
+APPEND_SLASH = True  # 这是Django的默认设置，确保它是True
