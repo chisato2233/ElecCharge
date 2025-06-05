@@ -73,7 +73,6 @@ export const chargingAPI = {
   // 历史记录相关API
   getChargingHistory: async (params = {}) => {
     const response = await api.get('/charging/history/', { params });
-    console.log(response);
     return response.data;
   },
   

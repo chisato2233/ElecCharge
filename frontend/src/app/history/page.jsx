@@ -94,7 +94,9 @@ export default function HistoryPage() {
     page: 1,
     pageSize: 10,
     totalCount: 0,
-    totalPages: 0
+    totalPages: 0,
+    next: null,
+    previous: null
   });
   
   const [selectedRecord, setSelectedRecord] = useState(null);
@@ -127,36 +129,28 @@ export default function HistoryPage() {
         promises.push(chargingAPI.getChargingStatistics(30));
       }
       
-      const [historyResponse, summaryResponse, statisticsResponse] = await Promise.all(promises);
+      const [historyResponseData, summaryResponse, statisticsResponse] = await Promise.all(promises);
       
-      // 适配Django REST framework的标准分页格式
-      if (historyResponse.data) {
-        console.log('History response:', historyResponse.data);
+      // 处理Django REST framework的标准分页格式
+      if (historyResponseData) {
+        console.log('History response:', historyResponseData);
         
-        // 检查是否是Django标准分页格式
-        if (historyResponse.data.results) {
-          // Django标准格式：{count, next, previous, results}
-          setHistoryData(historyResponse.data.results || []);
-          
-          // 计算分页信息
-          const totalCount = historyResponse.data.count || 0;
-          const pageSize = pagination.pageSize;
-          const totalPages = Math.ceil(totalCount / pageSize);
-          
-          setPagination(prev => ({
-            ...prev,
-            totalCount,
-            totalPages
-          }));
-        } else if (historyResponse.data.records) {
-          // 自定义格式（备用）
-          setHistoryData(historyResponse.data.records || []);
-          setPagination(prev => ({
-            ...prev,
-            totalCount: historyResponse.data.pagination?.total_count || 0,
-            totalPages: historyResponse.data.pagination?.total_pages || 0
-          }));
-        }
+        // Django标准分页格式：{count, next, previous, results}
+        const historyData = historyResponseData.results || [];
+        setHistoryData(historyData);
+        
+        // 计算分页信息
+        const totalCount = historyResponseData.count || 0;
+        const pageSize = pagination.pageSize;
+        const totalPages = Math.ceil(totalCount / pageSize);
+        
+        setPagination(prev => ({
+          ...prev,
+          totalCount,
+          totalPages,
+          next: historyResponseData.next,
+          previous: historyResponseData.previous
+        }));
       }
       
       if (summaryResponse.success) {
@@ -247,9 +241,25 @@ export default function HistoryPage() {
 
   const formatDuration = (hours) => {
     if (hours < 1) {
-      return `${Math.round(hours * 60)}分钟`;
+      const minutes = Math.round(hours * 60);
+      return `${minutes}分钟`;
+    } else if (hours < 24) {
+      const wholeHours = Math.floor(hours);
+      const remainingMinutes = Math.round((hours - wholeHours) * 60);
+      if (remainingMinutes === 0) {
+        return `${wholeHours}小时`;
+      } else {
+        return `${wholeHours}小时${remainingMinutes}分钟`;
+      }
+    } else {
+      const days = Math.floor(hours / 24);
+      const remainingHours = Math.floor(hours % 24);
+      if (remainingHours === 0) {
+        return `${days}天`;
+      } else {
+        return `${days}天${remainingHours}小时`;
+      }
     }
-    return `${hours.toFixed(1)}小时`;
   };
 
   if (loading && activeTab === 'records') {
@@ -430,6 +440,31 @@ export default function HistoryPage() {
                       <RefreshCw className="mr-2 h-4 w-4" />
                       刷新
                     </Button>
+                    
+                    {/* 页面大小选择器 */}
+                    <div className="flex items-center space-x-2">
+                      <Label className="text-sm">每页显示:</Label>
+                      <Select 
+                        value={pagination.pageSize.toString()} 
+                        onValueChange={(value) => {
+                          setPagination(prev => ({ 
+                            ...prev, 
+                            pageSize: parseInt(value),
+                            page: 1  // 重置到第一页
+                          }));
+                        }}
+                      >
+                        <SelectTrigger className="w-20">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="5">5</SelectItem>
+                          <SelectItem value="10">10</SelectItem>
+                          <SelectItem value="20">20</SelectItem>
+                          <SelectItem value="50">50</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                   <Button onClick={handleExport} disabled={exporting} size="sm">
                     <FileDown className="mr-2 h-4 w-4" />
@@ -525,7 +560,15 @@ export default function HistoryPage() {
                       {Math.min(pagination.page * pagination.pageSize, pagination.totalCount)} 条，
                       共 {pagination.totalCount} 条记录
                     </div>
-                    <div className="flex space-x-2">
+                    <div className="flex items-center space-x-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setPagination(prev => ({ ...prev, page: 1 }))}
+                        disabled={pagination.page <= 1}
+                      >
+                        首页
+                      </Button>
                       <Button
                         variant="outline"
                         size="sm"
@@ -534,6 +577,35 @@ export default function HistoryPage() {
                       >
                         上一页
                       </Button>
+                      
+                      {/* 页码显示 */}
+                      <div className="flex items-center space-x-1">
+                        {Array.from({ length: Math.min(5, pagination.totalPages) }, (_, i) => {
+                          let pageNum;
+                          if (pagination.totalPages <= 5) {
+                            pageNum = i + 1;
+                          } else if (pagination.page <= 3) {
+                            pageNum = i + 1;
+                          } else if (pagination.page >= pagination.totalPages - 2) {
+                            pageNum = pagination.totalPages - 4 + i;
+                          } else {
+                            pageNum = pagination.page - 2 + i;
+                          }
+                          
+                          return (
+                            <Button
+                              key={pageNum}
+                              variant={pagination.page === pageNum ? "default" : "outline"}
+                              size="sm"
+                              className="w-8 h-8 p-0"
+                              onClick={() => setPagination(prev => ({ ...prev, page: pageNum }))}
+                            >
+                              {pageNum}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                      
                       <Button
                         variant="outline"
                         size="sm"
@@ -541,6 +613,14 @@ export default function HistoryPage() {
                         disabled={pagination.page >= pagination.totalPages}
                       >
                         下一页
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setPagination(prev => ({ ...prev, page: pagination.totalPages }))}
+                        disabled={pagination.page >= pagination.totalPages}
+                      >
+                        末页
                       </Button>
                     </div>
                   </div>

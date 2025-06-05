@@ -213,6 +213,28 @@ export default function ChargingPage() {
     return modeData.waiting_count * 30; // 假设每个请求平均30分钟
   };
 
+  // 时间格式化函数
+  const formatTimeEstimate = (minutes) => {
+    if (minutes < 60) {
+      return `约 ${minutes} 分钟`;
+    } else if (minutes < 120) {
+      const remainingMinutes = minutes % 60;
+      if (remainingMinutes === 0) {
+        return `约 1 小时`;
+      } else {
+        return `约 1 小时 ${remainingMinutes} 分钟`;
+      }
+    } else {
+      const hours = Math.floor(minutes / 60);
+      const remainingMinutes = minutes % 60;
+      if (remainingMinutes === 0) {
+        return `约 ${hours} 小时`;
+      } else {
+        return `约 ${hours} 小时 ${remainingMinutes} 分钟`;
+      }
+    }
+  };
+
   const handleSubmit = (data) => {
     setRequestData(data);
     setShowConfirmDialog(true);
@@ -334,7 +356,7 @@ export default function ChargingPage() {
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-600 dark:text-gray-400">预计等待：</span>
-                          <span className="font-semibold text-gray-900 dark:text-white">{Math.round(currentRequest.estimated_wait_time / 60)} 小时</span>
+                          <span className="font-semibold text-gray-900 dark:text-white">{formatTimeEstimate(currentRequest.estimated_wait_time)}</span>
                         </div>
                       </>
                     )}
@@ -635,13 +657,13 @@ export default function ChargingPage() {
                       <div className="flex justify-between">
                         <span className="text-gray-600 dark:text-gray-400">充电时间：</span>
                         <span className="font-semibold text-gray-900 dark:text-white">
-                          约 {Math.ceil(calculateEstimatedTime() / 60)} 小时
+                          {formatTimeEstimate(calculateEstimatedTime())}
                         </span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-600 dark:text-gray-400">等待时间：</span>
                         <span className="font-semibold text-gray-900 dark:text-white">
-                          约 {Math.ceil(getQueueWaitTime() / 60)} 小时
+                          {formatTimeEstimate(getQueueWaitTime())}
                         </span>
                       </div>
                     </div>
@@ -710,7 +732,7 @@ export default function ChargingPage() {
                         <div className="flex justify-between">
                           <span className="text-gray-600 dark:text-gray-400">预计等待：</span>
                           <span className="font-semibold text-gray-900 dark:text-white">
-                            约 {Math.ceil(getQueueWaitTime() / 60)} 小时
+                            {formatTimeEstimate(getQueueWaitTime())}
                           </span>
                         </div>
                       </div>
