@@ -11,4 +11,5 @@ urlpatterns = [
     path('profile/update/', views.update_user_profile, name='update_profile'),
     path('vehicles/', views.vehicle_list, name='vehicle_list'),
     path('vehicles/<int:vehicle_id>/', views.vehicle_detail, name='vehicle_detail'),
+    path('vehicles/<int:vehicle_id>/set-default/', views.set_default_vehicle, name='set_default_vehicle'),
 ]

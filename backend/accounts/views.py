@@ -236,13 +236,7 @@ def vehicle_detail(request, vehicle_id):
         )
         
         if serializer.is_valid():
-            # 如果设置为默认车辆，先取消其他车辆的默认状态
-            if serializer.validated_data.get('is_default', False):
-                Vehicle.objects.filter(
-                    user=request.user, 
-                    is_default=True
-                ).exclude(id=vehicle.id).update(is_default=False)
-            
+            # 模型的save方法会处理默认车辆逻辑
             vehicle = serializer.save()
             return Response({
                 'success': True,
@@ -275,3 +269,28 @@ def vehicle_detail(request, vehicle_id):
             'success': True,
             'message': '车辆删除成功'
         })
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def set_default_vehicle(request, vehicle_id):
+    """
+    设置默认车辆
+    POST /api/auth/vehicles/{id}/set-default/
+    """
+    try:
+        vehicle = Vehicle.objects.get(id=vehicle_id, user=request.user)
+    except Vehicle.DoesNotExist:
+        return Response({
+            'success': False,
+            'error': '车辆不存在'
+        }, status=status.HTTP_404_NOT_FOUND)
+    
+    # 设置为默认车辆（模型的save方法会自动处理其他车辆的默认状态）
+    vehicle.is_default = True
+    vehicle.save()
+    
+    return Response({
+        'success': True,
+        'message': '默认车辆设置成功',
+        'data': VehicleSerializer(vehicle).data
+    })

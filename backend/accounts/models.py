@@ -25,6 +25,22 @@ class Vehicle(models.Model):
         db_table = 'vehicles'
         verbose_name = '车辆'
         verbose_name_plural = '车辆'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user'],
+                condition=models.Q(is_default=True),
+                name='unique_default_vehicle_per_user'
+            )
+        ]
         
     def __str__(self):
         return f"{self.license_plate} - {self.user.username}"
+    
+    def save(self, *args, **kwargs):
+        if self.is_default:
+            Vehicle.objects.filter(user=self.user, is_default=True).exclude(id=self.id).update(is_default=False)
+        
+        if not self.pk and not Vehicle.objects.filter(user=self.user).exists():
+            self.is_default = True
+            
+        super().save(*args, **kwargs)

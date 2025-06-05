@@ -65,13 +65,20 @@ class ChargingSessionSerializer(serializers.ModelSerializer):
     bill_id = serializers.CharField(source='id', read_only=True)
     generated_time = serializers.DateTimeField(source='created_at', read_only=True)
     pile_id = serializers.CharField(source='pile.pile_id', read_only=True)
+    pile = serializers.SerializerMethodField()
     
     class Meta:
         model = ChargingSession
-        fields = ['bill_id', 'generated_time', 'pile_id', 'charging_amount',
+        fields = ['id', 'bill_id', 'generated_time', 'pile_id', 'pile', 'charging_amount',
                  'charging_duration', 'start_time', 'end_time', 'peak_hours',
                  'normal_hours', 'valley_hours', 'peak_cost', 'normal_cost',
                  'valley_cost', 'service_cost', 'total_cost']
+    
+    def get_pile(self, obj):
+        return {
+            'pile_id': obj.pile.pile_id,
+            'pile_type': obj.pile.pile_type
+        }
 
 class SystemParameterSerializer(serializers.ModelSerializer):
     class Meta:

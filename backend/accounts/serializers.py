@@ -63,14 +63,7 @@ class VehicleCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         user = self.context['request'].user
         
-        # 如果设置为默认车辆，先取消其他车辆的默认状态
-        if validated_data.get('is_default', False):
-            Vehicle.objects.filter(user=user, is_default=True).update(is_default=False)
-        
-        # 如果是用户的第一辆车，自动设为默认
-        if not Vehicle.objects.filter(user=user).exists():
-            validated_data['is_default'] = True
-        
+        # 直接创建车辆，模型的save方法会处理默认车辆逻辑
         vehicle = Vehicle.objects.create(
             user=user,
             **validated_data
