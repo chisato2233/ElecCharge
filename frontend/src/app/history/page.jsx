@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import Layout from '@/components/layout/Layout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -63,17 +64,22 @@ import {
   Search,
   SortAsc,
   SortDesc,
-  RefreshCw
+  RefreshCw,
+  Info,
+  CheckCircle,
+  Settings
 } from 'lucide-react';
 import { chargingAPI } from '@/lib/charging';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
+import PageTransition, { containerVariants, itemVariants } from '@/components/layout/PageTransition';
 
 export default function HistoryPage() {
   const [historyData, setHistoryData] = useState([]);
   const [statistics, setStatistics] = useState(null);
   const [summary, setSummary] = useState(null);
+  const [systemInfo, setSystemInfo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('records');
   
@@ -105,7 +111,21 @@ export default function HistoryPage() {
 
   useEffect(() => {
     fetchData();
+    fetchSystemInfo();
   }, [filters, pagination.page]);
+
+  const fetchSystemInfo = async () => {
+    try {
+      // 获取系统状态信息（包含参数系统版本）
+      const response = await chargingAPI.getPublicSystemStatus();
+      if (response.success) {
+        setSystemInfo(response.data);
+      }
+    } catch (error) {
+      console.error('获取系统信息失败:', error);
+      // 不显示错误提示，因为这不是关键功能
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -129,7 +149,8 @@ export default function HistoryPage() {
         promises.push(chargingAPI.getChargingStatistics(30));
       }
       
-      const [historyResponseData, summaryResponse, statisticsResponse] = await Promise.all(promises);
+      const results = await Promise.all(promises);
+      const [historyResponseData, summaryResponse, statisticsResponse] = results;
       
       // 处理Django REST framework的标准分页格式
       if (historyResponseData) {
@@ -153,17 +174,25 @@ export default function HistoryPage() {
         }));
       }
       
-      if (summaryResponse.success) {
+      if (summaryResponse?.success) {
         setSummary(summaryResponse.data);
       }
       
-      if (statisticsResponse && statisticsResponse.success) {
+      if (statisticsResponse?.success) {
         setStatistics(statisticsResponse.data);
       }
       
     } catch (error) {
       console.error('获取历史数据失败:', error);
-      toast.error('获取历史数据失败');
+      
+      // 更详细的错误处理
+      if (error.response?.status === 401) {
+        toast.error('登录已过期，请重新登录');
+      } else if (error.response?.status >= 500) {
+        toast.error('服务器错误，请稍后重试');
+      } else {
+        toast.error('获取历史数据失败，请检查网络连接');
+      }
     } finally {
       setLoading(false);
     }
@@ -229,7 +258,7 @@ export default function HistoryPage() {
       toast.success('导出成功');
     } catch (error) {
       console.error('导出失败:', error);
-      toast.error('导出失败');
+      toast.error('导出失败，请稍后重试');
     } finally {
       setExporting(false);
     }
@@ -277,451 +306,560 @@ export default function HistoryPage() {
 
   return (
     <Layout>
-      <div className="px-4 py-6 sm:px-0">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white flex items-center">
-            <History className="mr-3 h-8 w-8" />
-            充电记录
-          </h1>
-          <p className="mt-2 text-gray-600 dark:text-gray-300">查看您的历史充电记录和统计分析</p>
-        </div>
-
-        {/* 概要卡片 */}
-        {summary && (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">总充电次数</CardTitle>
-                <Activity className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {summary.total_sessions}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  近30天：{summary.recent_sessions}次
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">总充电量</CardTitle>
-                <Zap className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {summary.summary.total_amount.toFixed(1)} kWh
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  平均每次：{(summary.summary.total_amount / Math.max(summary.total_sessions, 1)).toFixed(1)} kWh
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">总费用</CardTitle>
-                <DollarSign className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {formatCurrency(summary.summary.total_cost)}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  平均每次：{formatCurrency(summary.summary.avg_cost_per_session)}
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">活跃度</CardTitle>
-                <TrendingUp className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-gray-900 dark:text-white">
-                  <Badge variant={
-                    summary.summary.activity_level === 'very_active' ? 'default' :
-                    summary.summary.activity_level === 'active' ? 'secondary' : 'outline'
-                  }>
-                    {summary.summary.activity_level === 'very_active' ? '非常活跃' :
-                     summary.summary.activity_level === 'active' ? '活跃' :
-                     summary.summary.activity_level === 'moderate' ? '一般' : '不活跃'}
-                  </Badge>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  常用：{summary.summary.most_used_mode || '无'}
-                </p>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-          <TabsList>
-            <TabsTrigger value="records">充电记录</TabsTrigger>
-            <TabsTrigger value="statistics">统计分析</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="records" className="space-y-4">
-            {/* 筛选工具栏 */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center text-lg">
-                  <Filter className="mr-2 h-5 w-5" />
-                  筛选条件
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                  <div>
-                    <Label htmlFor="pile-type">充电模式</Label>
-                    <Select 
-                      value={filters.pile_type} 
-                      onValueChange={(value) => handleFilterChange('pile_type', value)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="全部" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">全部</SelectItem>
-                        <SelectItem value="fast">快充</SelectItem>
-                        <SelectItem value="slow">慢充</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div>
-                    <Label htmlFor="start-date">开始日期</Label>
-                    <Input
-                      type="date"
-                      value={filters.start_date}
-                      onChange={(e) => handleFilterChange('start_date', e.target.value)}
-                    />
-                  </div>
-
-                  <div>
-                    <Label htmlFor="end-date">结束日期</Label>
-                    <Input
-                      type="date"
-                      value={filters.end_date}
-                      onChange={(e) => handleFilterChange('end_date', e.target.value)}
-                    />
-                  </div>
-
-                  <div>
-                    <Label htmlFor="order-by">排序</Label>
-                    <Select 
-                      value={filters.order_by} 
-                      onValueChange={(value) => handleFilterChange('order_by', value)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="-start_time">时间 (最新)</SelectItem>
-                        <SelectItem value="start_time">时间 (最早)</SelectItem>
-                        <SelectItem value="-charging_amount">充电量 (高到低)</SelectItem>
-                        <SelectItem value="charging_amount">充电量 (低到高)</SelectItem>
-                        <SelectItem value="-total_cost">费用 (高到低)</SelectItem>
-                        <SelectItem value="total_cost">费用 (低到高)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="flex justify-between items-center mt-4">
-                  <div className="flex space-x-2">
-                    <Button onClick={clearFilters} variant="outline" size="sm">
-                      清除筛选
-                    </Button>
-                    <Button onClick={fetchData} variant="outline" size="sm">
-                      <RefreshCw className="mr-2 h-4 w-4" />
-                      刷新
-                    </Button>
-                    
-                    {/* 页面大小选择器 */}
-                    <div className="flex items-center space-x-2">
-                      <Label className="text-sm">每页显示:</Label>
-                      <Select 
-                        value={pagination.pageSize.toString()} 
-                        onValueChange={(value) => {
-                          setPagination(prev => ({ 
-                            ...prev, 
-                            pageSize: parseInt(value),
-                            page: 1  // 重置到第一页
-                          }));
-                        }}
-                      >
-                        <SelectTrigger className="w-20">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="5">5</SelectItem>
-                          <SelectItem value="10">10</SelectItem>
-                          <SelectItem value="20">20</SelectItem>
-                          <SelectItem value="50">50</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <Button onClick={handleExport} disabled={exporting} size="sm">
-                    <FileDown className="mr-2 h-4 w-4" />
-                    {exporting ? '导出中...' : '导出CSV'}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* 记录表格 */}
-            <Card>
-              <CardHeader>
-                <CardTitle>充电记录</CardTitle>
-                <CardDescription>
-                  共 {pagination.totalCount} 条记录
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>充电时间</TableHead>
-                      <TableHead>充电桩</TableHead>
-                      <TableHead>模式</TableHead>
-                      <TableHead>充电量</TableHead>
-                      <TableHead>时长</TableHead>
-                      <TableHead>费用</TableHead>
-                      <TableHead>操作</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {historyData.length > 0 ? (
-                      historyData.map((record) => (
-                        <TableRow key={record.id}>
-                          <TableCell>
-                            <div>
-                              <div className="font-medium">
-                                {format(new Date(record.start_time), 'yyyy-MM-dd', { locale: zhCN })}
-                              </div>
-                              <div className="text-sm text-gray-500">
-                                {format(new Date(record.start_time), 'HH:mm', { locale: zhCN })}
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell>{record.pile.pile_id}</TableCell>
-                          <TableCell>
-                            <Badge variant={record.pile.pile_type === 'fast' ? 'default' : 'secondary'}>
-                              {record.pile.pile_type === 'fast' ? '快充' : '慢充'}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>{record.charging_amount.toFixed(1)} kWh</TableCell>
-                          <TableCell>{formatDuration(record.charging_duration)}</TableCell>
-                          <TableCell className="font-semibold">
-                            {formatCurrency(record.total_cost)}
-                          </TableCell>
-                          <TableCell>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" className="h-8 w-8 p-0">
-                                  <MoreHorizontal className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuLabel>操作</DropdownMenuLabel>
-                                <DropdownMenuItem
-                                  onClick={() => {
-                                    setSelectedRecord(record);
-                                    setShowDetailDialog(true);
-                                  }}
-                                >
-                                  查看详情
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    ) : (
-                      <TableRow>
-                        <TableCell colSpan={7} className="text-center py-8 text-gray-500">
-                          暂无充电记录
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-
-                {/* 分页 */}
-                {pagination.totalPages > 1 && (
-                  <div className="flex items-center justify-between mt-4">
-                    <div className="text-sm text-gray-700 dark:text-gray-300">
-                      显示 {(pagination.page - 1) * pagination.pageSize + 1} 到{' '}
-                      {Math.min(pagination.page * pagination.pageSize, pagination.totalCount)} 条，
-                      共 {pagination.totalCount} 条记录
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setPagination(prev => ({ ...prev, page: 1 }))}
-                        disabled={pagination.page <= 1}
-                      >
-                        首页
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setPagination(prev => ({ ...prev, page: prev.page - 1 }))}
-                        disabled={pagination.page <= 1}
-                      >
-                        上一页
-                      </Button>
-                      
-                      {/* 页码显示 */}
-                      <div className="flex items-center space-x-1">
-                        {Array.from({ length: Math.min(5, pagination.totalPages) }, (_, i) => {
-                          let pageNum;
-                          if (pagination.totalPages <= 5) {
-                            pageNum = i + 1;
-                          } else if (pagination.page <= 3) {
-                            pageNum = i + 1;
-                          } else if (pagination.page >= pagination.totalPages - 2) {
-                            pageNum = pagination.totalPages - 4 + i;
-                          } else {
-                            pageNum = pagination.page - 2 + i;
-                          }
-                          
-                          return (
-                            <Button
-                              key={pageNum}
-                              variant={pagination.page === pageNum ? "default" : "outline"}
-                              size="sm"
-                              className="w-8 h-8 p-0"
-                              onClick={() => setPagination(prev => ({ ...prev, page: pageNum }))}
-                            >
-                              {pageNum}
-                            </Button>
-                          );
-                        })}
-                      </div>
-                      
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setPagination(prev => ({ ...prev, page: prev.page + 1 }))}
-                        disabled={pagination.page >= pagination.totalPages}
-                      >
-                        下一页
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setPagination(prev => ({ ...prev, page: pagination.totalPages }))}
-                        disabled={pagination.page >= pagination.totalPages}
-                      >
-                        末页
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="statistics" className="space-y-4">
-            <StatisticsView 
-              statistics={statistics} 
-              onRefresh={fetchStatistics}
-              loading={loading}
-            />
-          </TabsContent>
-        </Tabs>
-
-        {/* 详情对话框 */}
-        <Dialog open={showDetailDialog} onOpenChange={setShowDetailDialog}>
-          <DialogContent className="max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>充电记录详情</DialogTitle>
-            </DialogHeader>
-            {selectedRecord && (
-              <div className="space-y-6">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <h4 className="font-semibold mb-2">基本信息</h4>
-                    <div className="space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">充电桩：</span>
-                        <span>{selectedRecord.pile.pile_id}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">充电模式：</span>
-                        <Badge variant={selectedRecord.pile.pile_type === 'fast' ? 'default' : 'secondary'}>
-                          {selectedRecord.pile.pile_type === 'fast' ? '快充' : '慢充'}
-                        </Badge>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">开始时间：</span>
-                        <span>{format(new Date(selectedRecord.start_time), 'yyyy-MM-dd HH:mm:ss')}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">结束时间：</span>
-                        <span>{format(new Date(selectedRecord.end_time), 'yyyy-MM-dd HH:mm:ss')}</span>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <h4 className="font-semibold mb-2">充电信息</h4>
-                    <div className="space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">充电量：</span>
-                        <span>{selectedRecord.charging_amount.toFixed(2)} kWh</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">充电时长：</span>
-                        <span>{formatDuration(selectedRecord.charging_duration)}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <h4 className="font-semibold mb-2">费用明细</h4>
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">峰时费用：</span>
-                        <span>{formatCurrency(selectedRecord.peak_cost)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">平时费用：</span>
-                        <span>{formatCurrency(selectedRecord.normal_cost)}</span>
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">谷时费用：</span>
-                        <span>{formatCurrency(selectedRecord.valley_cost)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">服务费：</span>
-                        <span>{formatCurrency(selectedRecord.service_cost)}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="mt-4 pt-4 border-t">
-                    <div className="flex justify-between font-semibold">
-                      <span>总费用：</span>
-                      <span className="text-lg">{formatCurrency(selectedRecord.total_cost)}</span>
-                    </div>
-                  </div>
-                </div>
+      <PageTransition>
+        <div className="px-4 py-6 sm:px-0">
+          <motion.div 
+            className="mb-8"
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6 }}
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <motion.h1 
+                  className="text-3xl font-bold text-gray-900 dark:text-white flex items-center"
+                  initial={{ opacity: 0, x: -30 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.6, delay: 0.1 }}
+                >
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                  >
+                    <History className="mr-3 h-8 w-8" />
+                  </motion.div>
+                  充电记录
+                </motion.h1>
+                <motion.p 
+                  className="mt-2 text-gray-600 dark:text-gray-300"
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.6, delay: 0.2 }}
+                >
+                  查看您的历史充电记录和统计分析
+                </motion.p>
               </div>
-            )}
-          </DialogContent>
-        </Dialog>
-      </div>
+              
+              {/* 系统版本信息 */}
+              {systemInfo && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.5, delay: 0.3 }}
+                >
+                  <Card className="w-auto">
+                    <CardContent className="pt-4">
+                      <div className="flex items-center space-x-2 text-sm">
+                        <CheckCircle className="h-4 w-4 text-green-500" />
+                        <span className="text-gray-600 dark:text-gray-400">系统版本</span>
+                        <Badge variant="outline">v2.0.0</Badge>
+                        <Badge variant="secondary">新参数系统</Badge>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              )}
+            </div>
+          </motion.div>
+
+          {/* 概要卡片 */}
+          {summary && (
+            <motion.div 
+              className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8"
+              variants={containerVariants}
+              initial="hidden"
+              animate="visible"
+            >
+              <motion.div variants={itemVariants}>
+                <Card className="hover:shadow-lg transition-shadow duration-300">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">总充电次数</CardTitle>
+                    <Activity className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <motion.div 
+                      className="text-2xl font-bold text-gray-900 dark:text-white"
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      transition={{ duration: 0.5, delay: 0.5 }}
+                    >
+                      {summary.total_sessions}
+                    </motion.div>
+                    <p className="text-xs text-muted-foreground">
+                      近30天：{summary.recent_sessions}次
+                    </p>
+                  </CardContent>
+                </Card>
+              </motion.div>
+
+              <motion.div variants={itemVariants}>
+                <Card className="hover:shadow-lg transition-shadow duration-300">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">总充电量</CardTitle>
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                    >
+                      <Zap className="h-4 w-4 text-muted-foreground" />
+                    </motion.div>
+                  </CardHeader>
+                  <CardContent>
+                    <motion.div 
+                      className="text-2xl font-bold text-gray-900 dark:text-white"
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      transition={{ duration: 0.5, delay: 0.6 }}
+                    >
+                      {summary.summary.total_amount.toFixed(1)} kWh
+                    </motion.div>
+                    <p className="text-xs text-muted-foreground">
+                      平均每次：{(summary.summary.total_amount / Math.max(summary.total_sessions, 1)).toFixed(1)} kWh
+                    </p>
+                  </CardContent>
+                </Card>
+              </motion.div>
+
+              <motion.div variants={itemVariants}>
+                <Card className="hover:shadow-lg transition-shadow duration-300">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">总费用</CardTitle>
+                    <DollarSign className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <motion.div 
+                      className="text-2xl font-bold text-gray-900 dark:text-white"
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      transition={{ duration: 0.5, delay: 0.7 }}
+                    >
+                      {formatCurrency(summary.summary.total_cost)}
+                    </motion.div>
+                    <p className="text-xs text-muted-foreground">
+                      平均每次：{formatCurrency(summary.summary.avg_cost_per_session)}
+                    </p>
+                  </CardContent>
+                </Card>
+              </motion.div>
+
+              <motion.div variants={itemVariants}>
+                <Card className="hover:shadow-lg transition-shadow duration-300">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">活跃度</CardTitle>
+                    <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <motion.div 
+                      className="text-2xl font-bold text-gray-900 dark:text-white"
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      transition={{ duration: 0.5, delay: 0.8 }}
+                    >
+                      <Badge variant={
+                        summary.summary.activity_level === 'very_active' ? 'default' :
+                        summary.summary.activity_level === 'active' ? 'secondary' : 'outline'
+                      }>
+                        {summary.summary.activity_level === 'very_active' ? '非常活跃' :
+                         summary.summary.activity_level === 'active' ? '活跃' :
+                         summary.summary.activity_level === 'moderate' ? '一般' : '不活跃'}
+                      </Badge>
+                    </motion.div>
+                    <p className="text-xs text-muted-foreground">
+                      常用：{summary.summary.most_used_mode || '无'}
+                    </p>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            </motion.div>
+          )}
+
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.4 }}
+          >
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+              <TabsList>
+                <TabsTrigger value="records">充电记录</TabsTrigger>
+                <TabsTrigger value="statistics">统计分析</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="records" className="space-y-4">
+                {/* 筛选工具栏 */}
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.5, delay: 0.5 }}
+                >
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center text-lg">
+                        <Filter className="mr-2 h-5 w-5" />
+                        筛选条件
+                        {systemInfo && (
+                          <Badge variant="outline" className="ml-auto">
+                            <Settings className="mr-1 h-3 w-3" />
+                            智能参数系统
+                          </Badge>
+                        )}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <motion.div 
+                        className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4"
+                        variants={containerVariants}
+                        initial="hidden"
+                        animate="visible"
+                      >
+                        <motion.div variants={itemVariants}>
+                          <Label htmlFor="pile-type">充电模式</Label>
+                          <Select 
+                            value={filters.pile_type} 
+                            onValueChange={(value) => handleFilterChange('pile_type', value)}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="全部" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="all">全部</SelectItem>
+                              <SelectItem value="fast">快充</SelectItem>
+                              <SelectItem value="slow">慢充</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </motion.div>
+
+                        <motion.div variants={itemVariants}>
+                          <Label htmlFor="start-date">开始日期</Label>
+                          <Input
+                            type="date"
+                            value={filters.start_date}
+                            onChange={(e) => handleFilterChange('start_date', e.target.value)}
+                          />
+                        </motion.div>
+
+                        <motion.div variants={itemVariants}>
+                          <Label htmlFor="end-date">结束日期</Label>
+                          <Input
+                            type="date"
+                            value={filters.end_date}
+                            onChange={(e) => handleFilterChange('end_date', e.target.value)}
+                          />
+                        </motion.div>
+
+                        <motion.div variants={itemVariants}>
+                          <Label htmlFor="order-by">排序</Label>
+                          <Select 
+                            value={filters.order_by} 
+                            onValueChange={(value) => handleFilterChange('order_by', value)}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="-start_time">时间 (最新)</SelectItem>
+                              <SelectItem value="start_time">时间 (最早)</SelectItem>
+                              <SelectItem value="-charging_amount">充电量 (高到低)</SelectItem>
+                              <SelectItem value="charging_amount">充电量 (低到高)</SelectItem>
+                              <SelectItem value="-total_cost">费用 (高到低)</SelectItem>
+                              <SelectItem value="total_cost">费用 (低到高)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </motion.div>
+                      </motion.div>
+
+                      <div className="flex justify-between items-center mt-4">
+                        <div className="flex space-x-2">
+                          <Button onClick={clearFilters} variant="outline" size="sm">
+                            清除筛选
+                          </Button>
+                          <Button onClick={fetchData} variant="outline" size="sm">
+                            <RefreshCw className="mr-2 h-4 w-4" />
+                            刷新
+                          </Button>
+                          
+                          {/* 页面大小选择器 */}
+                          <div className="flex items-center space-x-2">
+                            <Label className="text-sm">每页显示:</Label>
+                            <Select 
+                              value={pagination.pageSize.toString()} 
+                              onValueChange={(value) => {
+                                setPagination(prev => ({ 
+                                  ...prev, 
+                                  pageSize: parseInt(value),
+                                  page: 1  // 重置到第一页
+                                }));
+                              }}
+                            >
+                              <SelectTrigger className="w-20">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="5">5</SelectItem>
+                                <SelectItem value="10">10</SelectItem>
+                                <SelectItem value="20">20</SelectItem>
+                                <SelectItem value="50">50</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                        <Button onClick={handleExport} disabled={exporting} size="sm">
+                          <FileDown className="mr-2 h-4 w-4" />
+                          {exporting ? '导出中...' : '导出CSV'}
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+
+                {/* 记录表格 */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle>充电记录</CardTitle>
+                    <CardDescription>
+                      共 {pagination.totalCount} 条记录
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>充电时间</TableHead>
+                          <TableHead>充电桩</TableHead>
+                          <TableHead>模式</TableHead>
+                          <TableHead>充电量</TableHead>
+                          <TableHead>时长</TableHead>
+                          <TableHead>费用</TableHead>
+                          <TableHead>操作</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {historyData.length > 0 ? (
+                          historyData.map((record) => (
+                            <TableRow key={record.id}>
+                              <TableCell>
+                                <div>
+                                  <div className="font-medium">
+                                    {format(new Date(record.start_time), 'yyyy-MM-dd', { locale: zhCN })}
+                                  </div>
+                                  <div className="text-sm text-gray-500">
+                                    {format(new Date(record.start_time), 'HH:mm', { locale: zhCN })}
+                                  </div>
+                                </div>
+                              </TableCell>
+                              <TableCell>{record.pile.pile_id}</TableCell>
+                              <TableCell>
+                                <Badge variant={record.pile.pile_type === 'fast' ? 'default' : 'secondary'}>
+                                  {record.pile.pile_type === 'fast' ? '快充' : '慢充'}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>{record.charging_amount.toFixed(1)} kWh</TableCell>
+                              <TableCell>{formatDuration(record.charging_duration)}</TableCell>
+                              <TableCell className="font-semibold">
+                                {formatCurrency(record.total_cost)}
+                              </TableCell>
+                              <TableCell>
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" className="h-8 w-8 p-0">
+                                      <MoreHorizontal className="h-4 w-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuLabel>操作</DropdownMenuLabel>
+                                    <DropdownMenuItem
+                                      onClick={() => {
+                                        setSelectedRecord(record);
+                                        setShowDetailDialog(true);
+                                      }}
+                                    >
+                                      查看详情
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        ) : (
+                          <TableRow>
+                            <TableCell colSpan={7} className="text-center py-8 text-gray-500">
+                              暂无充电记录
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+
+                    {/* 分页 */}
+                    {pagination.totalPages > 1 && (
+                      <div className="flex items-center justify-between mt-4">
+                        <div className="text-sm text-gray-700 dark:text-gray-300">
+                          显示 {(pagination.page - 1) * pagination.pageSize + 1} 到{' '}
+                          {Math.min(pagination.page * pagination.pageSize, pagination.totalCount)} 条，
+                          共 {pagination.totalCount} 条记录
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setPagination(prev => ({ ...prev, page: 1 }))}
+                            disabled={pagination.page <= 1}
+                          >
+                            首页
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setPagination(prev => ({ ...prev, page: prev.page - 1 }))}
+                            disabled={pagination.page <= 1}
+                          >
+                            上一页
+                          </Button>
+                          
+                          {/* 页码显示 */}
+                          <div className="flex items-center space-x-1">
+                            {Array.from({ length: Math.min(5, pagination.totalPages) }, (_, i) => {
+                              let pageNum;
+                              if (pagination.totalPages <= 5) {
+                                pageNum = i + 1;
+                              } else if (pagination.page <= 3) {
+                                pageNum = i + 1;
+                              } else if (pagination.page >= pagination.totalPages - 2) {
+                                pageNum = pagination.totalPages - 4 + i;
+                              } else {
+                                pageNum = pagination.page - 2 + i;
+                              }
+                              
+                              return (
+                                <Button
+                                  key={pageNum}
+                                  variant={pagination.page === pageNum ? "default" : "outline"}
+                                  size="sm"
+                                  className="w-8 h-8 p-0"
+                                  onClick={() => setPagination(prev => ({ ...prev, page: pageNum }))}
+                                >
+                                  {pageNum}
+                                </Button>
+                              );
+                            })}
+                          </div>
+                          
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setPagination(prev => ({ ...prev, page: prev.page + 1 }))}
+                            disabled={pagination.page >= pagination.totalPages}
+                          >
+                            下一页
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setPagination(prev => ({ ...prev, page: pagination.totalPages }))}
+                            disabled={pagination.page >= pagination.totalPages}
+                          >
+                            末页
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="statistics" className="space-y-4">
+                <StatisticsView 
+                  statistics={statistics} 
+                  onRefresh={fetchStatistics}
+                  loading={loading}
+                />
+              </TabsContent>
+            </Tabs>
+          </motion.div>
+
+          {/* 详情对话框 */}
+          <Dialog open={showDetailDialog} onOpenChange={setShowDetailDialog}>
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>充电记录详情</DialogTitle>
+              </DialogHeader>
+              {selectedRecord && (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <h4 className="font-semibold mb-2">基本信息</h4>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-gray-600 dark:text-gray-400">充电桩：</span>
+                          <span>{selectedRecord.pile.pile_id}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600 dark:text-gray-400">充电模式：</span>
+                          <Badge variant={selectedRecord.pile.pile_type === 'fast' ? 'default' : 'secondary'}>
+                            {selectedRecord.pile.pile_type === 'fast' ? '快充' : '慢充'}
+                          </Badge>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600 dark:text-gray-400">开始时间：</span>
+                          <span>{format(new Date(selectedRecord.start_time), 'yyyy-MM-dd HH:mm:ss')}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600 dark:text-gray-400">结束时间：</span>
+                          <span>{format(new Date(selectedRecord.end_time), 'yyyy-MM-dd HH:mm:ss')}</span>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <h4 className="font-semibold mb-2">充电信息</h4>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-gray-600 dark:text-gray-400">充电量：</span>
+                          <span>{selectedRecord.charging_amount.toFixed(2)} kWh</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600 dark:text-gray-400">充电时长：</span>
+                          <span>{formatDuration(selectedRecord.charging_duration)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="font-semibold mb-2">费用明细</h4>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div className="space-y-2">
+                        <div className="flex justify-between">
+                          <span className="text-gray-600 dark:text-gray-400">峰时费用：</span>
+                          <span>{formatCurrency(selectedRecord.peak_cost)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600 dark:text-gray-400">平时费用：</span>
+                          <span>{formatCurrency(selectedRecord.normal_cost)}</span>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex justify-between">
+                          <span className="text-gray-600 dark:text-gray-400">谷时费用：</span>
+                          <span>{formatCurrency(selectedRecord.valley_cost)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600 dark:text-gray-400">服务费：</span>
+                          <span>{formatCurrency(selectedRecord.service_cost)}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-4 pt-4 border-t">
+                      <div className="flex justify-between font-semibold">
+                        <span>总费用：</span>
+                        <span className="text-lg">{formatCurrency(selectedRecord.total_cost)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </DialogContent>
+          </Dialog>
+        </div>
+      </PageTransition>
     </Layout>
   );
 }

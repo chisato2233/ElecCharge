@@ -160,10 +160,11 @@ class SystemParameterAdmin(admin.ModelAdmin):
 
 @admin.register(ChargingPile)
 class ChargingPileAdmin(admin.ModelAdmin):
-    list_display = ['pile_id', 'pile_type', 'status', 'is_working', 'total_sessions', 'total_revenue']
+    list_display = ['pile_id', 'pile_type', 'status', 'is_working', 'charging_power', 'max_queue_size', 'estimated_remaining_time', 'total_sessions', 'total_revenue']
     list_filter = ['pile_type', 'status', 'is_working']
     search_fields = ['pile_id']
-    readonly_fields = ['total_sessions', 'total_duration', 'total_energy', 'total_revenue', 'created_at', 'updated_at']
+    readonly_fields = ['estimated_remaining_time', 'total_sessions', 'total_duration', 'total_energy', 'total_revenue', 'created_at', 'updated_at']
+    list_editable = ['charging_power', 'max_queue_size']
     
     # 按类型分组显示
     def get_queryset(self, request):
@@ -171,11 +172,16 @@ class ChargingPileAdmin(admin.ModelAdmin):
 
 @admin.register(ChargingRequest)
 class ChargingRequestAdmin(admin.ModelAdmin):
-    list_display = ['queue_number', 'user', 'charging_mode', 'current_status', 'progress_display', 'queue_position', 'created_at']
-    list_filter = ['charging_mode', 'current_status', 'created_at']
-    search_fields = ['queue_number', 'user__username']
-    readonly_fields = ['queue_number', 'queue_position', 'estimated_wait_time', 'created_at', 'updated_at']
+    list_display = ['queue_number', 'user', 'vehicle', 'charging_mode', 'current_status', 'queue_level', 'progress_display', 'queue_status_display', 'created_at']
+    list_filter = ['charging_mode', 'current_status', 'queue_level', 'created_at']
+    search_fields = ['queue_number', 'user__username', 'vehicle__license_plate']
+    readonly_fields = ['queue_number', 'queue_level', 'external_queue_position', 'pile_queue_position', 'estimated_wait_time', 'created_at', 'updated_at']
     actions = ['update_progress_5kwh', 'update_progress_10kwh', 'set_progress_50percent', 'complete_charging_action']
+    
+    def queue_status_display(self, obj):
+        """显示队列状态"""
+        return obj.get_queue_status_display()
+    queue_status_display.short_description = '队列状态'
     
     def progress_display(self, obj):
         """显示充电进度"""
@@ -217,42 +223,19 @@ class ChargingRequestAdmin(admin.ModelAdmin):
     
     def _complete_charging(self, charging_request):
         """完成充电"""
-        from .services import BillingService, ChargingQueueService
+        from .services import BillingService, AdvancedChargingQueueService
         
         with transaction.atomic():
-            # 更新请求状态
-            charging_request.current_status = 'completed'
-            charging_request.end_time = timezone.now()
-            charging_request.current_amount = charging_request.requested_amount
-            charging_request.save()
+            # 使用新的队列服务完成充电
+            queue_service = AdvancedChargingQueueService()
+            queue_service.complete_charging(charging_request)
             
-            # 更新会话
+            # 计算费用
             if hasattr(charging_request, 'session'):
                 session = charging_request.session
-                session.end_time = timezone.now()
-                session.charging_amount = charging_request.requested_amount
-                
-                # 计算费用
                 billing_service = BillingService()
                 billing_service.calculate_bill(session)
                 session.save()
-            
-            # 释放充电桩
-            if charging_request.charging_pile:
-                pile = charging_request.charging_pile
-                pile.is_working = False
-                pile.save()
-                
-                # 处理下一个排队请求
-                queue_service = ChargingQueueService()
-                queue_service.process_next_in_queue(pile)
-            
-            # 创建完成通知
-            Notification.objects.create(
-                user=charging_request.user,
-                type='charging_complete',
-                message=f'您的充电请求 {charging_request.queue_number} 已完成'
-            )
     
     # Admin Actions
     def update_progress_5kwh(self, request, queryset):

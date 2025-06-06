@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,8 +11,19 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Zap, User, UserPlus } from 'lucide-react';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { authAPI } from '@/lib/auth';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function AuthPage() {
+  const { login, isAuthenticated } = useAuth();
+  const router = useRouter();
+
+  // 如果已经登录，重定向到仪表板
+  useEffect(() => {
+    if (isAuthenticated) {
+      router.push('/dashboard');
+    }
+  }, [isAuthenticated, router]);
+
   // 登录表单状态
   const [loginData, setLoginData] = useState({
     username: '',
@@ -33,8 +44,6 @@ export default function AuthPage() {
   const [loginError, setLoginError] = useState('');
   const [registerError, setRegisterError] = useState('');
   const [registerSuccess, setRegisterSuccess] = useState('');
-  
-  const router = useRouter();
 
   // 处理登录
   const handleLogin = async (e) => {
@@ -43,13 +52,12 @@ export default function AuthPage() {
     setLoginError('');
 
     try {
-      const response = await authAPI.login(loginData);
-      if (response.success) {
-        localStorage.setItem('auth_token', response.data.token);
-        router.push('/dashboard');
+      const result = await login(loginData);
+      if (!result.success) {
+        setLoginError(result.error?.message || '登录失败');
       }
     } catch (error) {
-      setLoginError(error.response?.data?.error?.message || '登录失败');
+      setLoginError('登录过程中出现错误');
     } finally {
       setLoginLoading(false);
     }
@@ -204,9 +212,7 @@ export default function AuthPage() {
 
                   {registerSuccess && (
                     <Alert>
-                      <AlertDescription className="text-green-600">
-                        {registerSuccess}
-                      </AlertDescription>
+                      <AlertDescription>{registerSuccess}</AlertDescription>
                     </Alert>
                   )}
 
@@ -259,7 +265,6 @@ export default function AuthPage() {
                       value={registerData.password}
                       onChange={handleRegisterChange}
                       placeholder="请输入密码"
-                      minLength={6}
                     />
                   </div>
 
@@ -273,7 +278,6 @@ export default function AuthPage() {
                       value={registerData.confirmPassword}
                       onChange={handleRegisterChange}
                       placeholder="请再次输入密码"
-                      minLength={6}
                     />
                   </div>
 
@@ -282,7 +286,7 @@ export default function AuthPage() {
                     className="w-full" 
                     disabled={registerLoading}
                   >
-                    {registerLoading ? '注册中...' : '注册账号'}
+                    {registerLoading ? '注册中...' : '注册'}
                   </Button>
                 </form>
               </TabsContent>
@@ -290,22 +294,12 @@ export default function AuthPage() {
           </CardContent>
         </Card>
 
-        {/* 测试账号提示 - 适配深色模式 */}
-        <Card className="bg-primary/10 border-primary/20">
-          <CardContent className="pt-6">
-            <div className="text-center">
-              <p className="text-sm text-primary font-medium mb-2">
-                🧪 测试账号
-              </p>
-              <p className="text-xs text-muted-foreground">
-                用户名: testuser | 密码: test123
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                管理员: admin | 密码: admin123
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+        {/* 快速登录提示 */}
+        <div className="text-center">
+          <p className="text-sm text-muted-foreground">
+            演示账号：admin / 123456
+          </p>
+        </div>
       </div>
     </div>
   );

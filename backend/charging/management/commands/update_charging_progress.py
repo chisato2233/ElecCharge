@@ -114,10 +114,11 @@ class Command(BaseCommand):
         now = timezone.now()
         charging_duration = (now - request.start_time).total_seconds() / 3600
         
-        # 计算充电功率（kW）
-        if request.charging_mode == 'fast':
-            power = 120  # 快充功率约120kW
-        else:
+        # 获取充电桩的实际功率
+        power = 120  # 默认快充功率
+        if request.charging_pile:
+            power = request.charging_pile.charging_power
+        elif request.charging_mode == 'slow':
             power = 7   # 慢充功率约7kW
         
         # 计算已充电量
@@ -158,7 +159,7 @@ class Command(BaseCommand):
     
     def complete_charging(self, request):
         """自动完成充电"""
-        from charging.services import BillingService
+        from charging.services import BillingService, AdvancedChargingQueueService
         from django.db import transaction
         
         with transaction.atomic():
@@ -176,10 +177,9 @@ class Command(BaseCommand):
             billing_service.calculate_bill(session)
             session.save()
             
-            # 释放充电桩
-            pile = request.charging_pile
-            pile.is_working = False
-            pile.save()
+            # 使用新的队列服务完成充电
+            queue_service = AdvancedChargingQueueService()
+            queue_service.complete_charging(request)
             
             # 创建完成通知
             Notification.objects.create(
@@ -187,11 +187,6 @@ class Command(BaseCommand):
                 type='charging_complete',
                 message=f'您的充电请求 {request.queue_number} 已完成，共充电 {request.current_amount} kWh，总费用 {session.total_cost} 元'
             )
-            
-            # 处理下一个排队请求
-            from charging.services import ChargingQueueService
-            queue_service = ChargingQueueService()
-            queue_service.process_next_in_queue(pile)
         
         self.stdout.write(
             self.style.SUCCESS(f'🎉 {request.queue_number} ({request.user.username}) 充电完成！费用: {session.total_cost} 元')

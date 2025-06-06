@@ -2,6 +2,8 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/sonner";
+import { AuthProvider } from "@/contexts/AuthContext";
+import AuthGuard from "@/components/layout/AuthGuard";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -18,9 +20,13 @@ export default function RootLayout({ children }) {
           attribute="class"
           defaultTheme="light"
           enableSystem
-          disableTransitionOnChange
-      >
-        {children}
+          disableTransitionOnChange={false}
+        >
+          <AuthProvider>
+            <AuthGuard>
+              {children}
+            </AuthGuard>
+          </AuthProvider>
           <Toaster />
         </ThemeProvider>
       </body>

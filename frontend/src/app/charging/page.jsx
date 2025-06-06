@@ -1,43 +1,20 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import Layout from '@/components/layout/Layout';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Slider } from '@/components/ui/slider';
-import { Progress } from '@/components/ui/progress';
-import { 
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { 
-  Car, 
-  Zap, 
-  Clock, 
-  Battery, 
-  Calculator,
-  Users,
-  MapPin,
-  AlertCircle,
-  CheckCircle,
-  Info
-} from 'lucide-react';
 import { vehicleAPI } from '@/lib/vehicles';
 import { chargingAPI } from '@/lib/charging';
 import { toast } from 'sonner';
-import { useForm } from 'react-hook-form';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Zap, Activity, Clock, Users, Battery } from 'lucide-react';
+
+// 导入组件
+import ChargingStatusList from './components/ChargingStatusCard';
+import ChargingRequestDialog from './components/ChargingRequestDialog';
+import { BgAnimateButton } from '@/components/ui/bg-animate-button';
+import PageTransition, { cardVariants, containerVariants, itemVariants } from '@/components/layout/PageTransition';
 
 export default function ChargingPage() {
   const [vehicles, setVehicles] = useState([]);
@@ -45,58 +22,19 @@ export default function ChargingPage() {
   const [pilesStatus, setPilesStatus] = useState(null);
   const [systemParams, setSystemParams] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [currentRequest, setCurrentRequest] = useState(null);
-  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const [requestData, setRequestData] = useState(null);
-
-  const form = useForm({
-    defaultValues: {
-      vehicle_id: '',
-      charging_mode: 'fast',
-      requested_amount: 50,
-      battery_capacity: 75
-    }
-  });
-
-  const watchedValues = form.watch();
+  const [activeRequests, setActiveRequests] = useState([]);
 
   useEffect(() => {
     fetchInitialData();
-    // 每30秒更新系统状态（不包含用户请求）
-    const interval = setInterval(fetchStatusData, 30000);
+    // 每30秒更新系统状态和用户请求
+    const interval = setInterval(async () => {
+      await Promise.all([
+        fetchStatusData(),
+        fetchActiveRequests()
+      ]);
+    }, 30000);
     return () => clearInterval(interval);
   }, []);
-
-  // 监听当前请求状态变化，启动或停止用户状态轮询
-  useEffect(() => {
-    let userStatusInterval;
-    
-    if (currentRequest && ['waiting', 'charging'].includes(currentRequest.current_status)) {
-      // 启动用户状态轮询
-      userStatusInterval = setInterval(async () => {
-        try {
-          const response = await chargingAPI.getRequestStatus();
-          const request = response.data;
-          setCurrentRequest(request);
-          
-          // 如果请求已完成或取消，停止轮询
-          if (!request || !['waiting', 'charging'].includes(request.current_status)) {
-            setCurrentRequest(null);
-          }
-        } catch (error) {
-          // 请求不存在，清除当前请求
-          setCurrentRequest(null);
-        }
-      }, 10000); // 10秒间隔
-    }
-    
-    return () => {
-      if (userStatusInterval) {
-        clearInterval(userStatusInterval);
-      }
-    };
-  }, [currentRequest?.current_status]);
 
   const fetchInitialData = async () => {
     try {
@@ -105,7 +43,7 @@ export default function ChargingPage() {
         fetchVehicles(),
         fetchStatusData(),
         fetchSystemParams(),
-        checkCurrentRequest()
+        fetchActiveRequests()
       ]);
     } catch (error) {
       console.error('获取初始数据失败:', error);
@@ -120,13 +58,6 @@ export default function ChargingPage() {
       const response = await vehicleAPI.getVehicles();
       if (response.success) {
         setVehicles(response.data);
-        
-        // 自动选择默认车辆
-        const defaultVehicle = response.data.find(v => v.is_default);
-        if (defaultVehicle) {
-          form.setValue('vehicle_id', defaultVehicle.id.toString());
-          form.setValue('battery_capacity', defaultVehicle.battery_capacity);
-        }
       }
     } catch (error) {
       console.error('获取车辆列表失败:', error);
@@ -158,129 +89,24 @@ export default function ChargingPage() {
     }
   };
 
-  const checkCurrentRequest = async () => {
+  const fetchActiveRequests = async () => {
     try {
-      const response = await chargingAPI.getRequestStatus();
+      const response = await chargingAPI.getAllActiveRequests();
       if (response.success) {
-        setCurrentRequest(response.data);
+        setActiveRequests(response.data || []);
       }
     } catch (error) {
-      // 没有当前请求是正常的，不再输出错误日志
-      setCurrentRequest(null);
+      // 没有活跃请求是正常的
+      setActiveRequests([]);
     }
   };
 
-  const handleVehicleChange = (vehicleId) => {
-    const vehicle = vehicles.find(v => v.id.toString() === vehicleId);
-    if (vehicle) {
-      form.setValue('battery_capacity', vehicle.battery_capacity);
-      // 建议充电量为电池容量的80%
-      const suggestedAmount = Math.round(vehicle.battery_capacity * 0.8);
-      form.setValue('requested_amount', suggestedAmount);
-    }
-  };
-
-  const calculateEstimatedCost = () => {
-    if (!systemParams || !watchedValues.requested_amount) return 0;
-    
-    const { pricing } = systemParams;
-    const amount = watchedValues.requested_amount;
-    
-    // 简化计算：假设均匀分布在各时段
-    const peakCost = amount * 0.3 * pricing.peak_rate;
-    const normalCost = amount * 0.4 * pricing.normal_rate;
-    const valleyCost = amount * 0.3 * pricing.valley_rate;
-    const serviceCost = amount * pricing.service_rate;
-    
-    return peakCost + normalCost + valleyCost + serviceCost;
-  };
-
-  const calculateEstimatedTime = () => {
-    const amount = watchedValues.requested_amount;
-    const mode = watchedValues.charging_mode;
-    
-    // 快充功率约120kW，慢充约7kW
-    const power = mode === 'fast' ? 120 : 7;
-    return Math.ceil(amount / power * 60); // 分钟
-  };
-
-  const getQueueWaitTime = () => {
-    if (!queueStatus) return 0;
-    
-    const mode = watchedValues.charging_mode;
-    const modeData = mode === 'fast' ? queueStatus.fast_charging : queueStatus.slow_charging;
-    
-    return modeData.waiting_count * 30; // 假设每个请求平均30分钟
-  };
-
-  // 时间格式化函数
-  const formatTimeEstimate = (minutes) => {
-    if (minutes < 60) {
-      return `约 ${minutes} 分钟`;
-    } else if (minutes < 120) {
-      const remainingMinutes = minutes % 60;
-      if (remainingMinutes === 0) {
-        return `约 1 小时`;
-      } else {
-        return `约 1 小时 ${remainingMinutes} 分钟`;
-      }
-    } else {
-      const hours = Math.floor(minutes / 60);
-      const remainingMinutes = minutes % 60;
-      if (remainingMinutes === 0) {
-        return `约 ${hours} 小时`;
-      } else {
-        return `约 ${hours} 小时 ${remainingMinutes} 分钟`;
-      }
-    }
-  };
-
-  const handleSubmit = (data) => {
-    setRequestData(data);
-    setShowConfirmDialog(true);
-  };
-
-  const confirmSubmitRequest = async () => {
-    try {
-      setSubmitting(true);
-      
-      const vehicle = vehicles.find(v => v.id.toString() === requestData.vehicle_id);
-      const submitData = {
-        charging_mode: requestData.charging_mode,
-        requested_amount: requestData.requested_amount,
-        battery_capacity: vehicle.battery_capacity
-      };
-      
-      const response = await chargingAPI.submitRequest(submitData);
-      
-      if (response.success) {
-        toast.success('充电请求提交成功！');
-        setCurrentRequest(response.data);
-        setShowConfirmDialog(false);
-        form.reset();
-      }
-    } catch (error) {
-      console.error('提交充电请求失败:', error);
-      const errorMessage = error.response?.data?.error?.message || '提交失败';
-      toast.error(errorMessage);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleCancelRequest = async () => {
-    if (!currentRequest) return;
-    
-    try {
-      const response = await chargingAPI.cancelRequest(currentRequest.id);
-      if (response.success) {
-        toast.success('充电请求已取消');
-        setCurrentRequest(null);
-      }
-    } catch (error) {
-      console.error('取消请求失败:', error);
-      toast.error('取消请求失败');
-    }
+  const handleRequestUpdate = async () => {
+    // 当请求状态更新时，重新获取活跃请求列表和状态数据
+    await Promise.all([
+      fetchActiveRequests(),
+      fetchStatusData()
+    ]);
   };
 
   if (loading) {
@@ -296,475 +122,259 @@ export default function ChargingPage() {
     );
   }
 
-  // 如果有当前请求，显示状态页面
-  if (currentRequest) {
-    return (
-      <Layout>
-        <div className="px-4 py-6 sm:px-0">
-          <div className="max-w-4xl mx-auto">
-            <div className="mb-8">
-              <h1 className="text-3xl font-bold text-gray-900 dark:text-white">充电状态</h1>
-              <p className="mt-2 text-gray-600 dark:text-gray-300">您的充电请求状态</p>
-            </div>
-
-            <Card className="mb-6">
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <Zap className="mr-2 h-5 w-5" />
-                  当前充电请求
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-4">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600 dark:text-gray-400">队列号：</span>
-                      <span className="font-semibold text-gray-900 dark:text-white">{currentRequest.queue_number}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600 dark:text-gray-400">充电模式：</span>
-                      <Badge variant={currentRequest.charging_mode === 'fast' ? 'default' : 'secondary'}>
-                        {currentRequest.charging_mode === 'fast' ? '快充' : '慢充'}
-                      </Badge>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600 dark:text-gray-400">请求电量：</span>
-                      <span className="font-semibold text-gray-900 dark:text-white">{currentRequest.requested_amount} kWh</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600 dark:text-gray-400">当前状态：</span>
-                      <Badge variant={
-                        currentRequest.current_status === 'charging' ? 'default' :
-                        currentRequest.current_status === 'waiting' ? 'secondary' : 'outline'
-                      }>
-                        {currentRequest.current_status === 'charging' ? '充电中' :
-                         currentRequest.current_status === 'waiting' ? '等待中' : '已完成'}
-                      </Badge>
-                    </div>
-                  </div>
-                  
-                  <div className="space-y-4">
-                    {currentRequest.current_status === 'waiting' && (
-                      <>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600 dark:text-gray-400">排队位置：</span>
-                          <span className="font-semibold text-gray-900 dark:text-white">第 {currentRequest.queue_position} 位</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600 dark:text-gray-400">前方等待：</span>
-                          <span className="font-semibold text-gray-900 dark:text-white">{currentRequest.ahead_count} 人</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600 dark:text-gray-400">预计等待：</span>
-                          <span className="font-semibold text-gray-900 dark:text-white">{formatTimeEstimate(currentRequest.estimated_wait_time)}</span>
-                        </div>
-                      </>
-                    )}
-                    
-                    {currentRequest.current_status === 'charging' && (
-                      <>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600 dark:text-gray-400">充电桩：</span>
-                          <span className="font-semibold text-gray-900 dark:text-white">{currentRequest.charging_pile_id}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600 dark:text-gray-400">已充电量：</span>
-                          <span className="font-semibold text-gray-900 dark:text-white">{currentRequest.current_amount} kWh</span>
-                        </div>
-                        <div className="w-full">
-                          <div className="flex justify-between text-sm text-gray-600 dark:text-gray-400 mb-2">
-                            <span>充电进度</span>
-                            <span>{Math.round((currentRequest.current_amount / currentRequest.requested_amount) * 100)}%</span>
-                          </div>
-                          <Progress 
-                            value={(currentRequest.current_amount / currentRequest.requested_amount) * 100} 
-                            className="w-full"
-                          />
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-                
-                <div className="mt-6 flex justify-end space-x-3">
-                  {currentRequest.current_status === 'waiting' && (
-                    <Button
-                      onClick={handleCancelRequest}
-                      variant="outline"
-                      className="text-red-600 border-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
-                    >
-                      取消请求
-                    </Button>
-                  )}
-                  
-                  {currentRequest.current_status === 'charging' && (
-                    <Button
-                      onClick={async () => {
-                        try {
-                          const response = await chargingAPI.completeCharging();
-                          if (response.success) {
-                            toast.success('充电已结束');
-                            setCurrentRequest(null);
-                          }
-                        } catch (error) {
-                          toast.error('结束充电失败');
-                        }
-                      }}
-                      className="bg-green-600 hover:bg-green-700"
-                    >
-                      结束充电
-                    </Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-      </Layout>
-    );
-  }
-
   return (
     <Layout>
-      <div className="px-4 py-6 sm:px-0">
-        <div className="max-w-4xl mx-auto">
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">发起充电请求</h1>
-            <p className="mt-2 text-gray-600 dark:text-gray-300">选择车辆和充电参数，提交充电请求</p>
-          </div>
-
-          {/* 充电站状态概览 */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">快充桩状态</CardTitle>
-                <Zap className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {pilesStatus?.fast_piles?.filter(p => p.status === 'normal' && !p.is_working).length || 0}
-                  /
-                  {pilesStatus?.fast_piles?.length || 0}
-                </div>
-                <p className="text-xs text-muted-foreground">可用/总数</p>
-                <div className="mt-2">
-                  <Badge variant="secondary" className="text-xs">
-                    等待: {queueStatus?.fast_charging?.waiting_count || 0}人
-                  </Badge>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">慢充桩状态</CardTitle>
-                <Battery className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {pilesStatus?.slow_piles?.filter(p => p.status === 'normal' && !p.is_working).length || 0}
-                  /
-                  {pilesStatus?.slow_piles?.length || 0}
-                </div>
-                <p className="text-xs text-muted-foreground">可用/总数</p>
-                <div className="mt-2">
-                  <Badge variant="secondary" className="text-xs">
-                    等待: {queueStatus?.slow_charging?.waiting_count || 0}人
-                  </Badge>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">等候区</CardTitle>
-                <Users className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {queueStatus?.waiting_area_capacity?.current || 0}
-                  /
-                  {queueStatus?.waiting_area_capacity?.max || 0}
-                </div>
-                <p className="text-xs text-muted-foreground">当前/容量</p>
-                <div className="mt-2">
-                  <Progress 
-                    value={queueStatus?.waiting_area_capacity ? 
-                      (queueStatus.waiting_area_capacity.current / queueStatus.waiting_area_capacity.max) * 100 : 0
-                    } 
-                    className="h-2"
-                  />
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* 充电请求表单 */}
-          <Card>
-            <CardHeader>
-              <CardTitle>充电请求</CardTitle>
-              <CardDescription>
-                请选择车辆和充电参数
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Form {...form}>
-                <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-6">
-                  {/* 车辆选择 */}
-                  <FormField
-                    control={form.control}
-                    name="vehicle_id"
-                    rules={{ required: '请选择车辆' }}
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="flex items-center">
-                          <Car className="mr-2 h-4 w-4" />
-                          选择车辆
-                        </FormLabel>
-                        <Select onValueChange={(value) => {
-                          field.onChange(value);
-                          handleVehicleChange(value);
-                        }} value={field.value}>
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="请选择要充电的车辆" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {vehicles.map((vehicle) => (
-                              <SelectItem key={vehicle.id} value={vehicle.id.toString()}>
-                                <div className="flex items-center justify-between w-full">
-                                  <span className="font-medium">{vehicle.license_plate}</span>
-                                  <div className="flex items-center space-x-2 text-sm text-gray-500 dark:text-gray-400">
-                                    <span>{vehicle.battery_capacity}kWh</span>
-                                    {vehicle.is_default && <Badge variant="outline" className="text-xs">默认</Badge>}
-                                  </div>
-                                </div>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  {/* 充电模式 */}
-                  <FormField
-                    control={form.control}
-                    name="charging_mode"
-                    render={({ field }) => (
-                      <FormItem className="space-y-3">
-                        <FormLabel className="flex items-center">
-                          <Zap className="mr-2 h-4 w-4" />
-                          充电模式
-                        </FormLabel>
-                        <FormControl>
-                          <RadioGroup
-                            onValueChange={field.onChange}
-                            value={field.value}
-                            className="flex space-x-6"
-                          >
-                            <div className="flex items-center space-x-2">
-                              <RadioGroupItem value="fast" id="fast" />
-                              <label htmlFor="fast" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                快充模式
-                              </label>
-                            </div>
-                            <div className="flex items-center space-x-2">
-                              <RadioGroupItem value="slow" id="slow" />
-                              <label htmlFor="slow" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                慢充模式
-                              </label>
-                            </div>
-                          </RadioGroup>
-                        </FormControl>
-                        <div className="text-sm text-gray-600 dark:text-gray-400">
-                          {watchedValues.charging_mode === 'fast' ? 
-                            '快充模式：约120kW功率，适合紧急补电' : 
-                            '慢充模式：约7kW功率，适合长时间停车'}
-                        </div>
-                      </FormItem>
-                    )}
-                  />
-
-                  {/* 充电量选择 */}
-                  <FormField
-                    control={form.control}
-                    name="requested_amount"
-                    rules={{ 
-                      required: '请设置充电量',
-                      min: { value: 5, message: '充电量不能小于5kWh' },
-                      max: { value: watchedValues.battery_capacity, message: '充电量不能超过电池容量' }
-                    }}
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="flex items-center justify-between">
-                          <span className="flex items-center">
-                            <Battery className="mr-2 h-4 w-4" />
-                            充电量 (kWh)
-                          </span>
-                          <span className="text-sm font-normal text-gray-600 dark:text-gray-400">
-                            电池容量: {watchedValues.battery_capacity} kWh
-                          </span>
-                        </FormLabel>
-                        <FormControl>
-                          <div className="space-y-4">
-                            <Slider
-                              value={[field.value]}
-                              onValueChange={([value]) => field.onChange(value)}
-                              max={watchedValues.battery_capacity}
-                              min={5}
-                              step={5}
-                              className="w-full"
-                            />
-                            <div className="flex justify-between text-sm text-gray-600 dark:text-gray-400">
-                              <span>5 kWh</span>
-                              <span className="font-semibold text-lg text-gray-900 dark:text-white">
-                                {field.value} kWh
-                              </span>
-                              <span>{watchedValues.battery_capacity} kWh</span>
-                            </div>
-                            <Input
-                              type="number"
-                              value={field.value}
-                              onChange={(e) => field.onChange(Number(e.target.value))}
-                              min={5}
-                              max={watchedValues.battery_capacity}
-                              step={0.1}
-                              className="mt-2"
-                            />
-                          </div>
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  {/* 费用和时间估算 */}
-                  <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 space-y-3">
-                    <h3 className="font-medium flex items-center text-gray-900 dark:text-white">
-                      <Calculator className="mr-2 h-4 w-4" />
-                      费用与时间估算
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">预计费用：</span>
-                        <span className="font-semibold text-gray-900 dark:text-white">
-                          ¥{calculateEstimatedCost().toFixed(2)}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">充电时间：</span>
-                        <span className="font-semibold text-gray-900 dark:text-white">
-                          {formatTimeEstimate(calculateEstimatedTime())}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">等待时间：</span>
-                        <span className="font-semibold text-gray-900 dark:text-white">
-                          {formatTimeEstimate(getQueueWaitTime())}
-                        </span>
-                      </div>
-                    </div>
-                    
-                    {systemParams?.pricing && (
-                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                        <div className="grid grid-cols-2 gap-2">
-                          <div>峰时电价: ¥{systemParams.pricing.peak_rate}/kWh</div>
-                          <div>平时电价: ¥{systemParams.pricing.normal_rate}/kWh</div>
-                          <div>谷时电价: ¥{systemParams.pricing.valley_rate}/kWh</div>
-                          <div>服务费: ¥{systemParams.pricing.service_rate}/kWh</div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* 提交按钮 */}
-                  <div className="flex justify-end space-x-3 pt-6">
-                    <Button type="button" variant="outline" onClick={() => form.reset()}>
-                      重置
-                    </Button>
-                    <Button type="submit" disabled={submitting || vehicles.length === 0}>
-                      {submitting ? '提交中...' : '提交充电请求'}
-                    </Button>
-                  </div>
-                </form>
-              </Form>
-            </CardContent>
-          </Card>
-
-          {/* 确认对话框 */}
-          <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle className="flex items-center">
-                  <CheckCircle className="mr-2 h-5 w-5 text-green-600" />
-                  确认充电请求
-                </AlertDialogTitle>
-                <AlertDialogDescription asChild>
-                  <div className="space-y-4">
-                    <p>请确认以下充电请求信息：</p>
-                    {requestData && (
-                      <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 space-y-2">
-                        <div className="flex justify-between">
-                          <span className="text-gray-600 dark:text-gray-400">车辆：</span>
-                          <span className="font-semibold text-gray-900 dark:text-white">
-                            {vehicles.find(v => v.id.toString() === requestData.vehicle_id)?.license_plate}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600 dark:text-gray-400">充电模式：</span>
-                          <span className="font-semibold text-gray-900 dark:text-white">
-                            {requestData.charging_mode === 'fast' ? '快充' : '慢充'}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600 dark:text-gray-400">充电量：</span>
-                          <span className="font-semibold text-gray-900 dark:text-white">{requestData.requested_amount} kWh</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600 dark:text-gray-400">预计费用：</span>
-                          <span className="font-semibold text-green-600 dark:text-green-400">
-                            ¥{calculateEstimatedCost().toFixed(2)}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600 dark:text-gray-400">预计等待：</span>
-                          <span className="font-semibold text-gray-900 dark:text-white">
-                            {formatTimeEstimate(getQueueWaitTime())}
-                          </span>
-                        </div>
-                      </div>
-                    )}
-                    <div className="flex items-start space-x-2 text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 p-3 rounded-lg">
-                      <Info className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                      <div>
-                        <p className="font-medium">注意事项：</p>
-                        <ul className="list-disc list-inside mt-1 space-y-1">
-                          <li>提交后将进入排队等候</li>
-                          <li>实际费用以充电结束后结算为准</li>
-                          <li>等待期间可以取消请求</li>
-                        </ul>
-                      </div>
-                    </div>
-                  </div>
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>取消</AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={confirmSubmitRequest}
-                  disabled={submitting}
-                  className="bg-green-600 hover:bg-green-700"
+      <PageTransition>
+        <div className="px-4 py-6 sm:px-0">
+          <div className="max-w-6xl mx-auto">
+            {/* 页面标题和操作区 */}
+            <motion.div 
+              className="mb-8 flex items-center justify-between"
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, ease: "easeOut" }}
+            >
+              <div>
+                <motion.h1 
+                  className="text-3xl font-bold text-gray-900 dark:text-white"
+                  initial={{ opacity: 0, x: -30 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.6, delay: 0.1 }}
                 >
-                  {submitting ? '提交中...' : '确认提交'}
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+                  充电管理中心
+                </motion.h1>
+                <motion.p 
+                  className="mt-2 text-gray-600 dark:text-gray-300"
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.6, delay: 0.2 }}
+                >
+                  智能多级队列 • 精确时间估算 • 实时状态监控
+                </motion.p>
+              </div>
+              
+              {/* 发起充电请求按钮 */}
+              <motion.div
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.5, delay: 0.3 }}
+              >
+                <ChargingRequestDialog
+                  vehicles={vehicles}
+                  systemParams={systemParams}
+                  queueStatus={queueStatus}
+                  onRequestSubmitted={handleRequestUpdate}
+                  activeRequests={activeRequests}
+                />
+              </motion.div>
+            </motion.div>
+
+            {/* 系统状态概览卡片 */}
+            <motion.div 
+              className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8"
+              variants={containerVariants}
+              initial="hidden"
+              animate="visible"
+            >
+              {/* 总充电桩数 */}
+              <motion.div variants={itemVariants}>
+                <Card className="hover:shadow-lg transition-shadow duration-300">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">总充电桩</CardTitle>
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                    >
+                      <Zap className="h-4 w-4 text-muted-foreground" />
+                    </motion.div>
+                  </CardHeader>
+                  <CardContent>
+                    <motion.div 
+                      className="text-2xl font-bold text-gray-900 dark:text-white"
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      transition={{ duration: 0.5, delay: 0.5 }}
+                    >
+                      {pilesStatus ? 
+                        (pilesStatus.fast_piles?.length || 0) + (pilesStatus.slow_piles?.length || 0) 
+                        : 0
+                      }
+                    </motion.div>
+                    <p className="text-xs text-muted-foreground">
+                      {pilesStatus ? 
+                        `工作中: ${[...(pilesStatus.fast_piles || []), ...(pilesStatus.slow_piles || [])].filter(p => p.is_working).length}` 
+                        : '加载中...'
+                      }
+                    </p>
+                  </CardContent>
+                </Card>
+              </motion.div>
+
+              {/* 快充队列 */}
+              <motion.div variants={itemVariants}>
+                <Card className="hover:shadow-lg transition-shadow duration-300">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">快充队列</CardTitle>
+                    <Activity className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <motion.div 
+                      className="text-2xl font-bold text-gray-900 dark:text-white"
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      transition={{ duration: 0.5, delay: 0.6 }}
+                    >
+                      {queueStatus?.fast_charging?.waiting_count || 0}
+                    </motion.div>
+                    <p className="text-xs text-muted-foreground">
+                      正在充电: {queueStatus?.fast_charging?.charging_count || 0}
+                    </p>
+                  </CardContent>
+                </Card>
+              </motion.div>
+
+              {/* 慢充队列 */}
+              <motion.div variants={itemVariants}>
+                <Card className="hover:shadow-lg transition-shadow duration-300">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">慢充队列</CardTitle>
+                    <Battery className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <motion.div 
+                      className="text-2xl font-bold text-gray-900 dark:text-white"
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      transition={{ duration: 0.5, delay: 0.7 }}
+                    >
+                      {queueStatus?.slow_charging?.waiting_count || 0}
+                    </motion.div>
+                    <p className="text-xs text-muted-foreground">
+                      正在充电: {queueStatus?.slow_charging?.charging_count || 0}
+                    </p>
+                  </CardContent>
+                </Card>
+              </motion.div>
+
+              {/* 外部等候区 */}
+              <motion.div variants={itemVariants}>
+                <Card className="hover:shadow-lg transition-shadow duration-300">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">外部等候区</CardTitle>
+                    <Users className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <motion.div 
+                      className="text-2xl font-bold text-gray-900 dark:text-white"
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      transition={{ duration: 0.5, delay: 0.8 }}
+                    >
+                      {queueStatus?.external_waiting?.total_count || 0}
+                    </motion.div>
+                    <p className="text-xs text-muted-foreground">
+                      快充: {queueStatus?.external_waiting?.fast_count || 0} | 
+                      慢充: {queueStatus?.external_waiting?.slow_count || 0}
+                    </p>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            </motion.div>
+
+            {/* 当前活跃的充电请求 */}
+            <motion.div
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.4 }}
+            >
+              <ChargingStatusList 
+                activeRequests={activeRequests}
+                onRequestUpdate={handleRequestUpdate}
+              />
+            </motion.div>
+
+            {/* 如果没有活跃请求，显示提示信息 */}
+            {activeRequests.length === 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: 50 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.8, delay: 0.5 }}
+              >
+                <Card className="text-center py-12">
+                  <CardContent>
+                    <div className="flex flex-col items-center space-y-4">
+                      <motion.div 
+                        className="p-4 bg-gray-100 dark:bg-gray-800 rounded-full"
+                        whileHover={{ rotate: 360 }}
+                        transition={{ duration: 0.5 }}
+                      >
+                        <Zap className="h-8 w-8 text-gray-400" />
+                      </motion.div>
+                      <div>
+                        <motion.h3 
+                          className="text-lg font-semibold text-gray-900 dark:text-white mb-2"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ delay: 0.6 }}
+                        >
+                          暂无活跃的充电请求
+                        </motion.h3>
+                        <motion.p 
+                          className="text-gray-600 dark:text-gray-400 mb-4"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ delay: 0.7 }}
+                        >
+                          点击右上角的"充电请求"按钮开始充电
+                        </motion.p>
+                        <motion.div 
+                          className="flex flex-wrap justify-center gap-2"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ delay: 0.8 }}
+                        >
+                          <Badge variant="outline" className="text-xs">
+                            <Clock className="mr-1 h-3 w-3" />
+                            智能排队
+                          </Badge>
+                          <Badge variant="outline" className="text-xs">
+                            <Activity className="mr-1 h-3 w-3" />
+                            实时监控
+                          </Badge>
+                          <Badge variant="outline" className="text-xs">
+                            <Zap className="mr-1 h-3 w-3" />
+                            快速充电
+                          </Badge>
+                        </motion.div>
+                        <motion.div 
+                          className="mt-6"
+                          initial={{ opacity: 0, scale: 0.5 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          transition={{ delay: 0.9, type: "spring", stiffness: 200 }}
+                        >
+                          <BgAnimateButton 
+                            gradient="nebula"
+                            animation="pulse"
+                            shadow="soft"
+                            rounded="xl"
+                            className="transition-transform hover:scale-105"
+                            onClick={() => document.querySelector('[data-state="closed"]')?.click()}
+                          >
+                            <div className="flex items-center justify-center">
+                              <Zap className="mr-2 h-4 w-4" />
+                              立即开始新的充电请求
+                            </div>
+                          </BgAnimateButton>
+                        </motion.div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )}
+          </div>
         </div>
-      </div>
+      </PageTransition>
     </Layout>
   );
 } 

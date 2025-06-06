@@ -10,59 +10,17 @@ import {
   DropdownMenuTrigger 
 } from '@/components/ui/dropdown-menu';
 import { Bell, User, LogOut, Zap, Car, BarChart3, Home, History } from 'lucide-react';
-import { authAPI } from '@/lib/auth';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function Layout({ children }) {
-  const [user, setUser] = useState(null);
+  const { user, isAuthenticated, logout } = useAuth();
   const [notifications, setNotifications] = useState([]);
-  const [loading, setLoading] = useState(true);
   const pathname = usePathname();
-  const router = useRouter();
 
-  useEffect(() => {
-    // 检查登录状态
-    const checkAuth = async () => {
-      const token = localStorage.getItem('auth_token');
-      
-      if (!token) {
-        // 没有token，重定向到登录页面
-        router.push('/login');
-        return;
-      }
-
-      try {
-        // 验证token有效性并获取用户信息
-        const response = await authAPI.getProfile();
-        if (response.success) {
-          setUser(response.data);
-        } else {
-          // Token无效，清除并重定向到登录页面
-          localStorage.removeItem('auth_token');
-          router.push('/login');
-        }
-      } catch (error) {
-        console.error('获取用户信息失败:', error);
-        // API调用失败，清除token并重定向
-        localStorage.removeItem('auth_token');
-        router.push('/login');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    checkAuth();
-  }, [router]);
-
-  const handleLogout = async () => {
-    try {
-      await authAPI.logout();
-    } catch (error) {
-      console.error('登出失败:', error);
-    } finally {
-      localStorage.removeItem('auth_token');
-      router.push('/login');
-    }
-  };
+  // 如果未认证，直接返回children（让AuthProvider处理重定向）
+  if (!isAuthenticated) {
+    return children;
+  }
 
   const navigation = [
     { name: '仪表板', href: '/dashboard', icon: Home, current: pathname === '/dashboard' },
@@ -70,30 +28,6 @@ export default function Layout({ children }) {
     { name: '车辆管理', href: '/vehicles', icon: Car, current: pathname === '/vehicles' },
     { name: '充电记录', href: '/history', icon: History, current: pathname === '/history' },
   ];
-
-  // 加载状态
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600 dark:text-gray-300">验证登录状态...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // 如果没有用户信息，显示加载状态（等待重定向）
-  if (!user) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600 dark:text-gray-300">正在跳转...</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
@@ -150,7 +84,7 @@ export default function Layout({ children }) {
                   <Button variant="ghost" className="relative h-8 w-8 rounded-full">
                     <Avatar className="h-8 w-8">
                       <AvatarFallback>
-                        {user.username?.charAt(0).toUpperCase()}
+                        {user?.username?.charAt(0).toUpperCase() || 'U'}
                       </AvatarFallback>
                     </Avatar>
                   </Button>
@@ -158,9 +92,9 @@ export default function Layout({ children }) {
                 <DropdownMenuContent className="w-56" align="end">
                   <DropdownMenuItem>
                     <User className="mr-2 h-4 w-4" />
-                    <span>{user.username}</span>
+                    <span>{user?.username || '用户'}</span>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleLogout}>
+                  <DropdownMenuItem onClick={logout}>
                     <LogOut className="mr-2 h-4 w-4" />
                     <span>登出</span>
                   </DropdownMenuItem>

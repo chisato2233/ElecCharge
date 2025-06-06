@@ -11,7 +11,8 @@ from .models import (ChargingRequest, ChargingPile, ChargingSession,
 from .serialiazers import (ChargingRequestSerializer, ChargingRequestCreateSerializer,
                          ChargingPileSerializer, ChargingSessionSerializer,
                          SystemParameterSerializer, NotificationSerializer)
-from .services import ChargingQueueService, BillingService
+from .services import AdvancedChargingQueueService, BillingService
+from charging.utils.parameter_manager import ParameterManager
 
 # Create your views here.
 
@@ -20,37 +21,24 @@ class ChargingRequestView(generics.GenericAPIView):
     
     def post(self, request):
         """提交充电请求"""
-        serializer = ChargingRequestCreateSerializer(data=request.data)
+        serializer = ChargingRequestCreateSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
-            # 检查用户是否已有未完成的请求
-            existing_request = ChargingRequest.objects.filter(
-                user=request.user,
-                current_status__in=['waiting', 'charging']
-            ).first()
+            # 车辆验证已在序列化器中完成
             
-            if existing_request:
+            # 检查外部等候区容量
+            queue_service = AdvancedChargingQueueService()
+            if not queue_service.can_join_external_queue():
                 return Response({
                     'success': False,
                     'error': {
-                        'code': 'DUPLICATE_REQUEST',
-                        'message': '您已有未完成的充电请求'
-                    }
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # 检查等候区容量
-            queue_service = ChargingQueueService()
-            if not queue_service.can_join_queue():
-                return Response({
-                    'success': False,
-                    'error': {
-                        'code': 'QUEUE_FULL',
-                        'message': '等候区已满，请稍后再试'
+                        'code': 'EXTERNAL_QUEUE_FULL',
+                        'message': '外部等候区已满，请稍后再试'
                     }
                 }, status=status.HTTP_400_BAD_REQUEST)
             
             with transaction.atomic():
                 charging_request = serializer.save(user=request.user)
-                queue_service.add_to_queue(charging_request)
+                queue_service.add_to_external_queue(charging_request)
             
             response_data = ChargingRequestSerializer(charging_request).data
             
@@ -80,6 +68,16 @@ def modify_charging_request(request, request_id):
         current_status='waiting'
     )
     
+    # 只有在外部等候区的请求才能修改
+    if charging_request.queue_level not in ['external_waiting']:
+        return Response({
+            'success': False,
+            'error': {
+                'code': 'INVALID_REQUEST',
+                'message': '只有在外部等候区的请求才能修改'
+            }
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
     serializer = ChargingRequestCreateSerializer(
         charging_request, 
         data=request.data, 
@@ -88,17 +86,21 @@ def modify_charging_request(request, request_id):
     
     if serializer.is_valid():
         with transaction.atomic():
+            old_mode = charging_request.charging_mode
             charging_request = serializer.save()
-            # 重新计算排队位置
-            queue_service = ChargingQueueService()
-            queue_service.update_queue_position(charging_request)
+            
+            # 如果充电模式改变，需要重新计算等待时间
+            if old_mode != charging_request.charging_mode:
+                queue_service = AdvancedChargingQueueService()
+                charging_request.estimated_wait_time = queue_service._calculate_external_wait_time(charging_request)
+                charging_request.save()
         
         return Response({
             'success': True,
             'message': '充电请求修改成功',
             'data': {
                 'queue_number': charging_request.queue_number,
-                'new_position': charging_request.queue_position,
+                'queue_status': charging_request.get_queue_status_display(),
                 'estimated_wait_time': charging_request.estimated_wait_time
             }
         })
@@ -133,12 +135,8 @@ def cancel_charging_request(request, request_id):
         }, status=status.HTTP_400_BAD_REQUEST)
     
     with transaction.atomic():
-        charging_request.current_status = 'cancelled'
-        charging_request.save()
-        
-        # 更新后续排队位置
-        queue_service = ChargingQueueService()
-        queue_service.remove_from_queue(charging_request)
+        queue_service = AdvancedChargingQueueService()
+        queue_service.cancel_charging_request(charging_request)
     
     return Response({
         'success': True,
@@ -162,17 +160,18 @@ def charging_request_status(request):
                     'code': 'RESOURCE_NOT_FOUND',
                     'message': '没有找到活跃的充电请求'
                 }
-            }, status=status.HTTP_404_NOT_FOUND)
+            }, status=status.HTTP_200_OK)
         
-        # 计算前面等待的数量
-        ahead_count = ChargingRequest.objects.filter(
-            charging_mode=charging_request.charging_mode,
-            current_status='waiting',
-            queue_position__lt=charging_request.queue_position
-        ).count()
+        # 根据队列层级计算前面等待的数量
+        ahead_count = 0
+        if charging_request.queue_level == 'external_waiting':
+            ahead_count = charging_request.external_queue_position - 1
+        elif charging_request.queue_level == 'pile_queue':
+            ahead_count = charging_request.pile_queue_position - 1
         
         data = ChargingRequestSerializer(charging_request).data
         data['ahead_count'] = ahead_count
+        data['queue_status'] = charging_request.get_queue_status_display()
         
         return Response({
             'success': True,
@@ -222,46 +221,79 @@ def public_system_status(request):
 @permission_classes([IsAuthenticated])
 def complete_charging(request):
     """结束充电"""
-    charging_request = get_object_or_404(
-        ChargingRequest,
-        user=request.user,
-        current_status='charging'
-    )
+    # 获取要结束的充电请求ID
+    request_id = request.data.get('request_id')
     
-    with transaction.atomic():
-        # 结束充电会话
-        session = charging_request.session
-        session.end_time = timezone.now()
-        
-        # 计算费用
-        billing_service = BillingService()
-        billing_service.calculate_bill(session)
-        session.save()
-        
-        # 更新请求状态
-        charging_request.current_status = 'completed'
-        charging_request.end_time = timezone.now()
-        charging_request.save()
-        
-        # 释放充电桩
-        pile = charging_request.charging_pile
-        pile.is_working = False
-        pile.save()
-        
-        # 处理下一个排队请求
-        queue_service = ChargingQueueService()
-        queue_service.process_next_in_queue(pile)
+    if request_id:
+        # 通过请求ID查找
+        charging_request = get_object_or_404(
+            ChargingRequest,
+            id=request_id,
+            user=request.user,
+            current_status='charging'
+        )
+    else:
+        # 向后兼容：查找用户的充电请求
+        charging_request = get_object_or_404(
+            ChargingRequest,
+            user=request.user,
+            current_status='charging'
+        )
     
-    return Response({
-        'success': True,
-        'message': '充电已结束',
-        'data': {
-            'bill_id': str(session.id),
-            'total_amount': session.charging_amount,
-            'total_cost': float(session.total_cost),
-            'charging_duration': session.charging_duration
-        }
-    })
+    try:
+        with transaction.atomic():
+            # 计算账单
+            session = charging_request.session
+            billing_service = BillingService()
+            billing_service.calculate_bill(session)
+            session.save()
+            
+            # 完成充电
+            charging_request.current_amount = charging_request.requested_amount
+            charging_request.current_status = 'completed'
+            charging_request.end_time = timezone.now()
+            charging_request.save()
+            
+            # 处理后续逻辑
+            if hasattr(charging_request, 'session'):
+                session = charging_request.session
+                session.end_time = timezone.now()
+                session.charging_amount = charging_request.requested_amount
+                
+                billing_service = BillingService()
+                billing_service.calculate_bill(session)
+                session.save()
+            
+            # 使用新的队列服务完成充电
+            queue_service = AdvancedChargingQueueService()
+            queue_service.complete_charging(charging_request)
+            
+            # 发送完成通知
+            Notification.objects.create(
+                user=charging_request.user,
+                type='charging_complete',
+                message=f'您的充电请求 {charging_request.queue_number} 已完成，总费用：{session.total_cost}元'
+            )
+        
+        return Response({
+            'success': True,
+            'message': '充电已结束',
+            'data': {
+                'session_id': str(session.id),
+                'total_amount': session.charging_amount,
+                'total_cost': float(session.total_cost),
+                'charging_duration': session.charging_duration
+            }
+        })
+        
+    except Exception as e:
+        return Response({
+            'success': False,
+            'error': {
+                'code': 'INTERNAL_ERROR',
+                'message': f'结束充电失败: {str(e)}'
+            }
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
@@ -337,30 +369,9 @@ def update_charging_progress(request):
                 charging_request.save()
                 
             elif action == 'complete':
-                # 完成充电
-                charging_request.current_amount = charging_request.requested_amount
-                charging_request.current_status = 'completed'
-                charging_request.end_time = timezone.now()
-                charging_request.save()
-                
-                # 处理后续逻辑
-                if hasattr(charging_request, 'session'):
-                    session = charging_request.session
-                    session.end_time = timezone.now()
-                    session.charging_amount = charging_request.requested_amount
-                    
-                    billing_service = BillingService()
-                    billing_service.calculate_bill(session)
-                    session.save()
-                
-                # 释放充电桩
-                if charging_request.charging_pile:
-                    pile = charging_request.charging_pile
-                    pile.is_working = False
-                    pile.save()
-                    
-                    queue_service = ChargingQueueService()
-                    queue_service.process_next_in_queue(pile)
+                # 使用新的队列服务完成充电
+                queue_service = AdvancedChargingQueueService()
+                queue_service.complete_charging(charging_request)
                 
                 return Response({
                     'success': True,
@@ -406,61 +417,68 @@ def update_charging_progress(request):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['GET'])
-def queue_status(request):
-    """获取排队状态"""
-    # 快充排队
-    fast_queue = ChargingRequest.objects.filter(
-        charging_mode='fast',
-        current_status='waiting'
-    ).order_by('queue_position')
-    
-    # 慢充排队
-    slow_queue = ChargingRequest.objects.filter(
-        charging_mode='slow', 
-        current_status='waiting'
-    ).order_by('queue_position')
-    
-    # 等候区容量
+def enhanced_queue_status(request):
+    """获取增强的排队状态（支持多级队列）"""
     try:
-        waiting_area_max = SystemParameter.objects.get(
-            param_key='WaitingAreaSize'
-        ).get_value()
-    except SystemParameter.DoesNotExist:
-        waiting_area_max = 10
-    
-    waiting_area_current = ChargingRequest.objects.filter(
-        current_status='waiting'
-    ).count()
-    
-    return Response({
-        'success': True,
-        'data': {
-            'fast_charging': {
-                'waiting_count': fast_queue.count(),
-                'queue_list': [
-                    {
-                        'queue_number': req.queue_number,
-                        'estimated_wait_time': req.estimated_wait_time
-                    }
-                    for req in fast_queue[:5]  # 显示前5个
-                ]
-            },
-            'slow_charging': {
-                'waiting_count': slow_queue.count(),
-                'queue_list': [
-                    {
-                        'queue_number': req.queue_number,
-                        'estimated_wait_time': req.estimated_wait_time
-                    }
-                    for req in slow_queue[:5]
-                ]
-            },
-            'waiting_area_capacity': {
-                'current': waiting_area_current,
-                'max': waiting_area_max
+        queue_service = AdvancedChargingQueueService()
+        queue_data = queue_service.get_queue_status()
+        
+        return Response({
+            'success': True,
+            'data': queue_data
+        })
+    except Exception as e:
+        return Response({
+            'success': False,
+            'error': {
+                'code': 'INTERNAL_ERROR',
+                'message': f'查询排队状态失败: {str(e)}'
             }
-        }
-    })
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+def queue_status(request):
+    """获取排队状态（保持向后兼容）"""
+    try:
+        # 使用增强的队列服务
+        queue_service = AdvancedChargingQueueService()
+        enhanced_data = queue_service.get_queue_status()
+        
+        # 转换为旧格式以保持兼容性
+        fast_data = enhanced_data.get('fast', {})
+        slow_data = enhanced_data.get('slow', {})
+        
+        # 等候区容量 - 使用新的参数管理器
+        waiting_area_max = ParameterManager.get_parameter('external_waiting_area_size', 50)
+        
+        # 计算总等待人数
+        total_waiting = fast_data.get('total_waiting', 0) + slow_data.get('total_waiting', 0)
+        
+        return Response({
+            'success': True,
+            'data': {
+                'fast_charging': {
+                    'waiting_count': fast_data.get('total_waiting', 0),
+                    'queue_list': fast_data.get('external_waiting', {}).get('queue_list', [])
+                },
+                'slow_charging': {
+                    'waiting_count': slow_data.get('total_waiting', 0),
+                    'queue_list': slow_data.get('external_waiting', {}).get('queue_list', [])
+                },
+                'waiting_area_capacity': {
+                    'current': total_waiting,
+                    'max': waiting_area_max
+                }
+            }
+        })
+    except Exception as e:
+        return Response({
+            'success': False,
+            'error': {
+                'code': 'INTERNAL_ERROR',
+                'message': f'查询排队状态失败: {str(e)}'
+            }
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['GET'])
 def piles_status(request):
@@ -1067,3 +1085,49 @@ def mark_notification_read(request, notification_id):
         'success': True,
         'message': '通知已标记为已读'
     })
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def active_charging_requests(request):
+    """获取当前用户的所有活跃充电请求"""
+    try:
+        charging_requests = ChargingRequest.objects.filter(
+            user=request.user,
+            current_status__in=['waiting', 'charging']
+        ).order_by('created_at')
+        
+        if not charging_requests.exists():
+            return Response({
+                'success': True,
+                'data': []
+            })
+        
+        # 为每个请求计算前面等待的数量和状态信息
+        results = []
+        for charging_request in charging_requests:
+            # 根据队列层级计算前面等待的数量
+            ahead_count = 0
+            if charging_request.queue_level == 'external_waiting':
+                ahead_count = charging_request.external_queue_position - 1
+            elif charging_request.queue_level == 'pile_queue':
+                ahead_count = charging_request.pile_queue_position - 1
+            
+            data = ChargingRequestSerializer(charging_request).data
+            data['ahead_count'] = ahead_count
+            data['queue_status'] = charging_request.get_queue_status_display()
+            data['queue_level'] = charging_request.queue_level
+            
+            results.append(data)
+        
+        return Response({
+            'success': True,
+            'data': results
+        })
+    except Exception as e:
+        return Response({
+            'success': False,
+            'error': {
+                'code': 'INTERNAL_ERROR',
+                'message': f'查询活跃充电请求失败: {str(e)}'
+            }
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

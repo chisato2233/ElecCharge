@@ -13,6 +13,7 @@ urlpatterns = [
     path('request/<uuid:request_id>/', views.modify_charging_request, name='modify_request'),
     path('request/<uuid:request_id>/cancel/', views.cancel_charging_request, name='cancel_request'),
     path('request/status/', views.charging_request_status, name='request_status'),
+    path('requests/active/', views.active_charging_requests, name='active_requests'),
     path('complete/', views.complete_charging, name='complete_charging'),
     
     # 充电进度控制
@@ -21,6 +22,7 @@ urlpatterns = [
     # 排队信息
     path('queue/status/', views.queue_status, name='queue_status'),
     path('piles/status/', views.piles_status, name='piles_status'),
+    path('queue/enhanced/', views.enhanced_queue_status, name='enhanced_queue_status'),
     
     # 账单管理
     path('bills/', views.BillListView.as_view(), name='bills'),

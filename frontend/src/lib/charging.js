@@ -12,6 +12,12 @@ export const chargingAPI = {
     return response.data;
   },
   
+  // 获取当前用户的所有活跃充电请求
+  getAllActiveRequests: async () => {
+    const response = await api.get('/charging/requests/active/');
+    return response.data;
+  },
+  
   // 智能状态检查：只在可能有请求时才调用
   checkRequestStatusSafely: async () => {
     try {
@@ -31,14 +37,20 @@ export const chargingAPI = {
     return response.data;
   },
   
-  completeCharging: async () => {
-    const response = await api.post('/charging/complete/');
+  completeCharging: async (requestId) => {
+    const response = await api.post('/charging/complete/', { request_id: requestId });
     return response.data;
   },
   
   // 状态查询
   getQueueStatus: async () => {
     const response = await api.get('/charging/queue/status/');
+    return response.data;
+  },
+  
+  // 新的增强队列状态API - 支持多级队列
+  getEnhancedQueueStatus: async () => {
+    const response = await api.get('/charging/queue/enhanced/');
     return response.data;
   },
   
