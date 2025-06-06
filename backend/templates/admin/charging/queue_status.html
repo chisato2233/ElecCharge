@@ -1,0 +1,382 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+{% load admin_interface_tags %}
+
+{% block title %}充电队列状态总览{% endblock %}
+
+{% block extrahead %}
+{{ block.super }}
+<style>
+    /* 适配admin-interface的样式 */
+    .dashboard-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 15px;
+        margin-bottom: 20px;
+    }
+    
+    .stat-card {
+        background: var(--body-bg, #fff);
+        border: 1px solid var(--border-color, #ddd);
+        border-radius: 6px;
+        padding: 15px;
+        text-align: center;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        transition: box-shadow 0.3s ease;
+    }
+    
+    .stat-card:hover {
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    
+    .stat-number {
+        font-size: 1.8rem;
+        font-weight: 600;
+        color: var(--primary, #417690);
+        margin-bottom: 5px;
+    }
+    
+    .stat-label {
+        color: var(--body-quiet-color, #666);
+        font-size: 0.9rem;
+        font-weight: 500;
+    }
+    
+    .queue-section {
+        background: var(--body-bg, #fff);
+        border: 1px solid var(--border-color, #ddd);
+        border-radius: 6px;
+        margin-bottom: 20px;
+        overflow: hidden;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    
+    .queue-header {
+        background: var(--darkened-bg, #f8f9fa);
+        padding: 15px;
+        border-bottom: 1px solid var(--border-color, #ddd);
+        font-weight: 600;
+        font-size: 1.1rem;
+        color: var(--body-fg, #333);
+    }
+    
+    .queue-content {
+        padding: 20px;
+    }
+    
+    .external-queue {
+        background: rgba(65, 118, 144, 0.1);
+        border-radius: 6px;
+        padding: 15px;
+        margin-bottom: 15px;
+        border-left: 4px solid var(--primary, #417690);
+    }
+    
+    .pile-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 15px;
+    }
+    
+    .pile-card {
+        border: 1px solid var(--border-color, #ddd);
+        border-radius: 6px;
+        overflow: hidden;
+        background: var(--body-bg, #fff);
+    }
+    
+    .pile-header {
+        padding: 12px 15px;
+        font-weight: 600;
+        color: white;
+        font-size: 0.95rem;
+    }
+    
+    .pile-header.working {
+        background: #28a745;
+    }
+    
+    .pile-header.idle {
+        background: var(--primary, #417690);
+    }
+    
+    .pile-header.fault {
+        background: #dc3545;
+    }
+    
+    .pile-body {
+        padding: 15px;
+        background: var(--darkened-bg, #fafafa);
+    }
+    
+    .queue-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+    
+    .queue-item {
+        padding: 8px 12px;
+        margin-bottom: 6px;
+        background: var(--body-bg, white);
+        border-radius: 4px;
+        border-left: 3px solid var(--primary, #417690);
+        font-size: 0.9rem;
+    }
+    
+    .queue-item.charging {
+        border-left-color: #28a745;
+        background: rgba(40, 167, 69, 0.05);
+    }
+    
+    .refresh-btn {
+        background: var(--primary, #417690);
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.9rem;
+        margin-bottom: 15px;
+        transition: background-color 0.3s ease;
+    }
+    
+    .refresh-btn:hover {
+        background: var(--primary-hover, #365a6e);
+    }
+    
+    .loading {
+        opacity: 0.6;
+        pointer-events: none;
+    }
+    
+    .timestamp {
+        color: var(--body-quiet-color, #666);
+        font-size: 0.85rem;
+        margin-bottom: 15px;
+        font-style: italic;
+    }
+    
+    .section-title {
+        color: var(--body-fg, #333);
+        margin-bottom: 10px;
+        font-weight: 600;
+    }
+    
+    /* 响应式设计 */
+    @media (max-width: 768px) {
+        .dashboard-stats {
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 10px;
+        }
+        
+        .pile-grid {
+            grid-template-columns: 1fr;
+        }
+        
+        .queue-content {
+            padding: 15px;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="content-wrapper">
+    <h1 style="color: var(--body-fg, #333); margin-bottom: 20px;">⚡ 充电队列状态总览</h1>
+
+    <button class="refresh-btn" onclick="refreshQueueStatus()">🔄 刷新状态</button>
+
+    <div class="timestamp" id="lastUpdate">
+        最后更新: {{ "now"|date:"Y-m-d H:i:s" }}
+    </div>
+
+    <!-- 系统统计概览 -->
+    <div class="dashboard-stats">
+        <div class="stat-card">
+            <div class="stat-number">{{ stats.total_piles }}</div>
+            <div class="stat-label">总充电桩数</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number">{{ stats.working_piles }}</div>
+            <div class="stat-label">使用中</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number">{{ stats.fault_piles }}</div>
+            <div class="stat-label">故障桩</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number">{{ stats.total_waiting }}</div>
+            <div class="stat-label">总等待数</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number">{{ stats.external_waiting }}</div>
+            <div class="stat-label">外部等候区</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number">{{ stats.pile_queue_waiting }}</div>
+            <div class="stat-label">桩队列等待</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number">{{ stats.total_charging }}</div>
+            <div class="stat-label">正在充电</div>
+        </div>
+    </div>
+
+    <!-- 快充队列状态 -->
+    <div class="queue-section" id="fast-queue-section">
+        <div class="queue-header">⚡ 快充队列状态</div>
+        <div class="queue-content">
+            <!-- 外部等候区 -->
+            <div class="external-queue">
+                <h3 class="section-title">🚪 外部等候区 ({{ fast_status.fast.external_waiting.count }}人)</h3>
+                {% if fast_status.fast.external_waiting.queue_list %}
+                    <ul class="queue-list">
+                        {% for req in fast_status.fast.external_waiting.queue_list %}
+                        <li class="queue-item">
+                            <strong>{{ req.position }}位:</strong> {{ req.queue_number }} 
+                            <small>(预计等待{{ req.estimated_wait_time }}分钟)</small>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <p style="color: var(--body-quiet-color, #666); font-style: italic;">外部等候区为空</p>
+                {% endif %}
+            </div>
+            
+            <!-- 充电桩详情 -->
+            <h3 class="section-title">🔌 充电桩状态</h3>
+            <div class="pile-grid">
+                {% for pile in fast_status.fast.piles %}
+                <div class="pile-card">
+                    <div class="pile-header {% if pile.is_working %}working{% else %}idle{% endif %}">
+                        {{ pile.pile_id }}
+                        {% if pile.is_working %}(使用中){% else %}(空闲){% endif %}
+                    </div>
+                    <div class="pile-body">
+                        {% if pile.current_charging.queue_number %}
+                            <div class="queue-item charging">
+                                <strong>正在充电:</strong> {{ pile.current_charging.queue_number }}<br>
+                                <strong>进度:</strong> {{ pile.current_charging.progress|floatformat:1 }}%
+                            </div>
+                        {% endif %}
+                        
+                        <p><strong>队列:</strong> {{ pile.queue_count }}/{{ pile.max_queue_size }}</p>
+                        <p><strong>预计剩余:</strong> {{ pile.estimated_remaining_time }}分钟</p>
+                        
+                        {% if pile.queue_list %}
+                            <ul class="queue-list">
+                                {% for req in pile.queue_list %}
+                                <li class="queue-item">
+                                    <strong>{{ req.position }}位:</strong> {{ req.queue_number }}<br>
+                                    <small>等待{{ req.estimated_wait_time }}分钟</small>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        {% else %}
+                            <p style="color: var(--body-quiet-color, #666); font-style: italic; font-size: 0.9rem;">队列为空</p>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- 慢充队列状态 -->
+    <div class="queue-section" id="slow-queue-section">
+        <div class="queue-header">🐌 慢充队列状态</div>
+        <div class="queue-content">
+            <!-- 外部等候区 -->
+            <div class="external-queue">
+                <h3 class="section-title">🚪 外部等候区 ({{ slow_status.slow.external_waiting.count }}人)</h3>
+                {% if slow_status.slow.external_waiting.queue_list %}
+                    <ul class="queue-list">
+                        {% for req in slow_status.slow.external_waiting.queue_list %}
+                        <li class="queue-item">
+                            <strong>{{ req.position }}位:</strong> {{ req.queue_number }} 
+                            <small>(预计等待{{ req.estimated_wait_time }}分钟)</small>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <p style="color: var(--body-quiet-color, #666); font-style: italic;">外部等候区为空</p>
+                {% endif %}
+            </div>
+            
+            <!-- 充电桩详情 -->
+            <h3 class="section-title">🔌 充电桩状态</h3>
+            <div class="pile-grid">
+                {% for pile in slow_status.slow.piles %}
+                <div class="pile-card">
+                    <div class="pile-header {% if pile.is_working %}working{% else %}idle{% endif %}">
+                        {{ pile.pile_id }}
+                        {% if pile.is_working %}(使用中){% else %}(空闲){% endif %}
+                    </div>
+                    <div class="pile-body">
+                        {% if pile.current_charging.queue_number %}
+                            <div class="queue-item charging">
+                                <strong>正在充电:</strong> {{ pile.current_charging.queue_number }}<br>
+                                <strong>进度:</strong> {{ pile.current_charging.progress|floatformat:1 }}%
+                            </div>
+                        {% endif %}
+                        
+                        <p><strong>队列:</strong> {{ pile.queue_count }}/{{ pile.max_queue_size }}</p>
+                        <p><strong>预计剩余:</strong> {{ pile.estimated_remaining_time }}分钟</p>
+                        
+                        {% if pile.queue_list %}
+                            <ul class="queue-list">
+                                {% for req in pile.queue_list %}
+                                <li class="queue-item">
+                                    <strong>{{ req.position }}位:</strong> {{ req.queue_number }}<br>
+                                    <small>等待{{ req.estimated_wait_time }}分钟</small>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        {% else %}
+                            <p style="color: var(--body-quiet-color, #666); font-style: italic; font-size: 0.9rem;">队列为空</p>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function refreshQueueStatus() {
+    const refreshBtn = document.querySelector('.refresh-btn');
+    const sections = document.querySelectorAll('.queue-section');
+    
+    // 显示加载状态
+    refreshBtn.classList.add('loading');
+    refreshBtn.textContent = '🔄 刷新中...';
+    sections.forEach(section => section.classList.add('loading'));
+    
+    fetch('refresh/')
+        .then(response => response.json())
+        .then(data => {
+            // 更新时间戳
+            document.getElementById('lastUpdate').textContent = 
+                '最后更新: ' + new Date().toLocaleString('zh-CN');
+            
+            // 重新加载页面以显示新数据
+            location.reload();
+        })
+        .catch(error => {
+            console.error('刷新失败:', error);
+            alert('刷新失败，请检查网络连接');
+        })
+        .finally(() => {
+            // 恢复正常状态
+            refreshBtn.classList.remove('loading');
+            refreshBtn.textContent = '🔄 刷新状态';
+            sections.forEach(section => section.classList.remove('loading'));
+        });
+}
+
+// 自动刷新（每30秒）
+setInterval(refreshQueueStatus, 30000);
+</script>
+{% endblock %} 

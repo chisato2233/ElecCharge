@@ -194,6 +194,43 @@ class Command(BaseCommand):
                 'is_editable': True
             },
             
+            # 故障处理配置
+            {
+                'param_key': 'fault_dispatch_strategy',
+                'param_value': 'priority',
+                'param_type': 'string',
+                'description': '故障调度策略(priority/time_order)',
+                'is_editable': True
+            },
+            {
+                'param_key': 'fault_detection_enabled',
+                'param_value': 'true',
+                'param_type': 'boolean',
+                'description': '是否启用充电桩故障检测',
+                'is_editable': True
+            },
+            {
+                'param_key': 'auto_recovery_enabled',
+                'param_value': 'true',
+                'param_type': 'boolean',
+                'description': '是否启用故障自动恢复处理',
+                'is_editable': True
+            },
+            {
+                'param_key': 'fault_notification_delay',
+                'param_value': '0',
+                'param_type': 'int',
+                'description': '故障通知延迟时间(秒)',
+                'is_editable': True
+            },
+            {
+                'param_key': 'recovery_reschedule_enabled',
+                'param_value': 'true',
+                'param_type': 'boolean',
+                'description': '恢复时是否重新调度队列',
+                'is_editable': True
+            },
+            
             # 维护配置
             {
                 'param_key': 'maintenance_check_interval',

@@ -1,8 +1,7 @@
 "use client"
 
 import { ReactNode, useMemo, useState } from "react"
-import { AnimatePresence, MotionConfig, motion } from "framer-motion"
-import useMeasure from "react-use-measure"
+import { motion } from "framer-motion"
 
 import { cn } from "@/lib/utils"
 
@@ -15,19 +14,13 @@ function DirectionAwareTabs({
   const [activeTab, setActiveTab] = useState(0)
   const [direction, setDirection] = useState(0)
   const [isAnimating, setIsAnimating] = useState(false)
-  const [ref, bounds] = useMeasure()
-
-  const content = useMemo(() => {
-    const activeTabContent = tabs.find((tab) => tab.id === activeTab)?.content
-    return activeTabContent || null
-  }, [activeTab, tabs])
 
   const handleTabClick = (newTabId) => {
     if (newTabId !== activeTab && !isAnimating) {
       const newDirection = newTabId > activeTab ? 1 : -1
       setDirection(newDirection)
       setActiveTab(newTabId)
-      onChange ? onChange() : null
+      onChange ? onChange(newTabId) : null
     }
   }
 
@@ -50,10 +43,10 @@ function DirectionAwareTabs({
   }
 
   return (
-    <div className=" flex flex-col items-center w-full">
+    <div className="flex flex-col items-center w-full">
       <div
         className={cn(
-          "flex space-x-1 border border-none rounded-full cursor-pointer bg-neutral-600 px-[3px] py-[3.2px] shadow-inner-shadow",
+          "flex space-x-0.5 sm:space-x-1 border border-gray-200 dark:border-gray-800 rounded-full cursor-pointer bg-gray-100 dark:bg-gray-900 px-[2px] sm:px-[3px] py-[2px] sm:py-[3.2px] shadow-lg",
           className,
           rounded
         )}
@@ -63,10 +56,10 @@ function DirectionAwareTabs({
             key={tab.id}
             onClick={() => handleTabClick(tab.id)}
             className={cn(
-              "relative rounded-full px-3.5 py-1.5 text-xs sm:text-sm font-medium text-neutral-200  transition focus-visible:outline-1 focus-visible:ring-1  focus-visible:outline-none flex gap-2 items-center ",
+              "relative rounded-full px-2 sm:px-3.5 py-1 sm:py-1.5 text-xs sm:text-sm font-medium transition focus-visible:outline-1 focus-visible:ring-1 focus-visible:outline-none flex gap-1 sm:gap-2 items-center whitespace-nowrap",
               activeTab === tab.id
-                ? "text-white"
-                : "hover:text-neutral-300/60  text-neutral-200/80",
+                ? "text-white dark:text-gray-900"
+                : "hover:text-gray-600 dark:hover:text-gray-400 text-gray-500 dark:text-gray-500",
               rounded
             )}
             style={{ WebkitTapHighlightColor: "transparent" }}
@@ -74,44 +67,16 @@ function DirectionAwareTabs({
             {activeTab === tab.id && (
               <motion.span
                 layoutId="bubble"
-                className="absolute  inset-0 z-10 bg-neutral-700 mix-blend-difference shadow-inner-shadow border border-white/10"
+                className="absolute inset-0 z-10 bg-gray-900 dark:bg-gray-100 shadow-lg border border-gray-300 dark:border-gray-700"
                 style={rounded ? { borderRadius: 9 } : { borderRadius: 9999 }}
                 transition={{ type: "spring", bounce: 0.19, duration: 0.4 }}
               />
             )}
 
-            {tab.label}
+            <span className="relative z-20">{tab.label}</span>
           </button>
         ))}
       </div>
-      <MotionConfig transition={{ duration: 0.4, type: "spring", bounce: 0.2 }}>
-        <motion.div
-          className="relative mx-auto w-full h-full overflow-hidden"
-          initial={false}
-          animate={{ height: bounds.height }}
-        >
-          <div className="p-1" ref={ref}>
-            <AnimatePresence
-              custom={direction}
-              mode="popLayout"
-              onExitComplete={() => setIsAnimating(false)}
-            >
-              <motion.div
-                key={activeTab}
-                variants={variants}
-                initial="initial"
-                animate="active"
-                exit="exit"
-                custom={direction}
-                onAnimationStart={() => setIsAnimating(true)}
-                onAnimationComplete={() => setIsAnimating(false)}
-              >
-                {content}
-              </motion.div>
-            </AnimatePresence>
-          </div>
-        </motion.div>
-      </MotionConfig>
     </div>
   )
 }

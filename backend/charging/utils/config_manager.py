@@ -17,6 +17,15 @@ class ConfigManager:
         'TrickleChargingPileNum': {'value': 3, 'type': 'int', 'description': '慢充电桩数量'},
         'WaitingAreaSize': {'value': 6, 'type': 'int', 'description': '等候区容量'},
         'ChargingQueueLen': {'value': 2, 'type': 'int', 'description': '每桩排队队列长度'},
+        'max_charging_time_per_session': {'value': 480, 'type': 'int', 'description': '单次充电最大时间限制(分钟)'},
+        'notification_enabled': {'value': True, 'type': 'boolean', 'description': '是否启用通知功能'},
+        'auto_queue_management': {'value': True, 'type': 'boolean', 'description': '是否启用自动队列管理'},
+        'shortest_wait_time_threshold': {'value': 5, 'type': 'int', 'description': '最短等待时间阈值(分钟)'},
+        'fault_dispatch_strategy': {'value': 'priority', 'type': 'string', 'description': '故障调度策略(priority/time_order)'},
+        'fault_detection_enabled': {'value': True, 'type': 'boolean', 'description': '是否启用故障检测'},
+        'auto_recovery_enabled': {'value': True, 'type': 'boolean', 'description': '是否启用自动恢复处理'},
+        'fault_notification_delay': {'value': 0, 'type': 'int', 'description': '故障通知延迟时间(秒)'},
+        'recovery_reschedule_enabled': {'value': True, 'type': 'boolean', 'description': '恢复时是否重新调度队列'},
     }
     
     @classmethod

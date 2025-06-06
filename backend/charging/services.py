@@ -1,8 +1,9 @@
-from charging.utils.parameter_manager import ParameterManager, get_queue_config
-from django.utils import timezone
 from django.db import transaction
+from django.utils import timezone
+from django.db.models import F
+from .models import ChargingRequest, ChargingPile, Notification, SystemParameter
 from decimal import Decimal
-from .models import ChargingRequest, ChargingPile, SystemParameter, Notification
+from charging.utils.parameter_manager import ParameterManager, get_queue_config, get_fault_handling_config
 import logging
 
 logger = logging.getLogger(__name__)
@@ -14,6 +15,11 @@ class AdvancedChargingQueueService:
         # 使用新的参数管理器获取配置
         queue_config = get_queue_config()
         self.external_waiting_limit = queue_config['external_waiting_area_size']
+        self.SystemParameter = SystemParameter
+        
+    def _get_parameter(self, key, default):
+        """获取系统参数（优化版，使用参数管理器）"""
+        return ParameterManager.get_parameter(key, default)
         
     def can_join_external_queue(self):
         """检查是否可以加入外部等候区"""
@@ -78,8 +84,13 @@ class AdvancedChargingQueueService:
         return int(base_wait_time + ahead_count * 10)  # 每个前面的人额外等待10分钟
     
     def _try_transfer_to_pile_queue(self, charging_request):
-        """尝试将请求从外部等候区转移到桩队列"""
+        """尝试将请求从外部等候区转移到桩队列（修改版，考虑暂停状态）"""
         if charging_request.queue_level != 'external_waiting':
+            return False
+        
+        # 检查是否暂停了叫号
+        if self.is_external_queue_paused(charging_request.charging_mode):
+            logger.debug(f"外部等候区叫号已暂停，跳过转移请求 {charging_request.queue_number}")
             return False
         
         # 查找最优桩（剩余时间最短且队列未满）
@@ -363,6 +374,325 @@ class AdvancedChargingQueueService:
             }
         
         return result
+
+    def handle_pile_fault(self, pile):
+        """处理充电桩故障"""
+        from django.db import transaction
+        
+        logger.warning(f"检测到充电桩 {pile.pile_id} 故障，开始故障处理流程")
+        
+        with transaction.atomic():
+            # 1. 立即停止当前充电（如果有）
+            current_charging = self._stop_current_charging_due_to_fault(pile)
+            
+            # 2. 获取故障桩队列中的所有请求
+            fault_queue_requests = self._get_fault_queue_requests(pile)
+            
+            # 3. 根据系统参数选择调度策略（使用新的参数管理器）
+            fault_config = get_fault_handling_config()
+            dispatch_strategy = fault_config['dispatch_strategy']
+            
+            if dispatch_strategy == 'priority':
+                # 优先级调度：暂停等候区叫号，优先处理故障队列
+                self._handle_fault_priority_dispatch(pile, fault_queue_requests)
+            elif dispatch_strategy == 'time_order':
+                # 时间顺序调度：与同类车辆合并排序
+                self._handle_fault_time_order_dispatch(pile, fault_queue_requests)
+            else:
+                # 默认使用优先级调度
+                self._handle_fault_priority_dispatch(pile, fault_queue_requests)
+            
+            # 4. 发送故障通知（考虑延迟）
+            notification_delay = fault_config['notification_delay']
+            if notification_delay > 0:
+                # 这里可以实现延迟通知逻辑
+                pass
+            self._send_fault_notifications(pile, current_charging, fault_queue_requests)
+            
+            logger.info(f"充电桩 {pile.pile_id} 故障处理完成，影响用户数: {len(fault_queue_requests) + (1 if current_charging else 0)}")
+
+    def _stop_current_charging_due_to_fault(self, pile):
+        """停止故障桩上的当前充电"""
+        from .models import ChargingRequest, ChargingSession, Notification
+        from django.utils import timezone
+        
+        current_charging = ChargingRequest.objects.filter(
+            charging_pile=pile,
+            current_status='charging'
+        ).first()
+        
+        if not current_charging:
+            return None
+            
+        logger.info(f"停止用户 {current_charging.user.username} 在故障桩 {pile.pile_id} 的充电")
+        
+        # 更新请求状态
+        current_charging.current_status = 'completed'
+        current_charging.end_time = timezone.now()
+        current_charging.queue_level = 'completed'
+        current_charging.save()
+        
+        # 释放充电桩
+        pile.is_working = False
+        pile.save()
+        
+        # 结束充电会话并计费
+        session = current_charging.session
+        session.end_time = timezone.now()
+        
+        # 计算充电时长
+        duration = session.end_time - session.start_time
+        session.charging_duration = duration.total_seconds() / 3600
+        session.charging_amount = current_charging.current_amount
+        
+        # 计算费用（故障导致的提前结束）
+        billing_service = BillingService()
+        billing_service.calculate_bill(session)
+        session.save()
+        
+        # 创建故障通知
+        Notification.objects.create(
+            user=current_charging.user,
+            type='pile_fault',
+            message=f'充电桩 {pile.pile_id} 发生故障，您的充电已提前结束。实际充电 {current_charging.current_amount:.2f} kWh，费用 {session.total_cost} 元。'
+        )
+        
+        return current_charging
+
+    def _get_fault_queue_requests(self, pile):
+        """获取故障桩队列中的所有请求"""
+        from .models import ChargingRequest
+        
+        return list(ChargingRequest.objects.filter(
+            charging_pile=pile,
+            queue_level='pile_queue'
+        ).order_by('pile_queue_position'))
+
+    def _handle_fault_priority_dispatch(self, fault_pile, fault_queue_requests):
+        """优先级调度：暂停等候区叫号，优先处理故障队列"""
+        logger.info(f"采用优先级调度策略处理故障桩 {fault_pile.pile_id} 的 {len(fault_queue_requests)} 个请求")
+        
+        # 1. 暂停等候区叫号（通过设置系统参数）
+        self._pause_external_queue_calling(fault_pile.pile_type)
+        
+        # 2. 优先重新分配故障队列中的请求
+        for request in fault_queue_requests:
+            self._reassign_request_priority(request)
+        
+        # 3. 在所有故障请求处理完毕后恢复等候区叫号
+        self._schedule_resume_external_queue_calling(fault_pile.pile_type)
+
+    def _handle_fault_time_order_dispatch(self, fault_pile, fault_queue_requests):
+        """时间顺序调度：故障车辆与其它同类未充电车辆合并排序调度"""
+        logger.info(f"采用时间顺序调度策略处理故障桩 {fault_pile.pile_id} 的 {len(fault_queue_requests)} 个请求")
+        
+        # 1. 将故障请求重新加入外部等候区，按时间顺序排序
+        for request in fault_queue_requests:
+            self._reassign_request_time_order(request)
+
+    def _pause_external_queue_calling(self, pile_type):
+        """暂停指定类型的外部等候区叫号"""
+        param_key = f'{pile_type}_external_queue_paused'
+        
+        # 设置暂停标志
+        from .models import SystemParameter
+        param, created = SystemParameter.objects.get_or_create(
+            param_key=param_key,
+            defaults={
+                'param_value': 'true',
+                'param_type': 'boolean',
+                'description': f'{pile_type}充电外部等候区暂停叫号（故障处理中）'
+            }
+        )
+        if not created:
+            param.param_value = 'true'
+            param.save()
+            
+        logger.info(f"已暂停 {pile_type} 外部等候区叫号")
+
+    def _reassign_request_priority(self, request):
+        """优先级模式重新分配请求"""
+        from .models import Notification
+        
+        # 清除原桩分配
+        original_pile = request.charging_pile
+        request.charging_pile = None
+        request.queue_level = 'external_waiting'
+        request.pile_queue_position = 0
+        
+        # 计算在外部等候区的优先位置（插入到队首）
+        same_mode_external = ChargingRequest.objects.filter(
+            charging_mode=request.charging_mode,
+            queue_level='external_waiting'
+        ).count()
+        
+        request.external_queue_position = 1  # 优先级最高，插入队首
+        request.estimated_wait_time = self._calculate_external_wait_time(request)
+        request.save()
+        
+        # 更新其他外部等候区请求的位置
+        ChargingRequest.objects.filter(
+            charging_mode=request.charging_mode,
+            queue_level='external_waiting',
+            external_queue_position__gte=1
+        ).exclude(id=request.id).update(
+            external_queue_position=F('external_queue_position') + 1
+        )
+        
+        # 立即尝试转移到可用桩
+        self._try_transfer_to_pile_queue(request)
+        
+        # 发送重新调度通知
+        Notification.objects.create(
+            user=request.user,
+            type='queue_transfer',
+            message=f'由于充电桩 {original_pile.pile_id} 故障，您的请求 {request.queue_number} 已重新调度，当前位置：{request.get_queue_status_display()}'
+        )
+
+    def _reassign_request_time_order(self, request):
+        """时间顺序模式重新分配请求"""
+        from .models import Notification
+        from django.db.models import F
+        
+        # 清除原桩分配
+        original_pile = request.charging_pile
+        request.charging_pile = None
+        request.queue_level = 'external_waiting'
+        request.pile_queue_position = 0
+        
+        # 按创建时间在外部等候区中找到合适位置
+        earlier_requests = ChargingRequest.objects.filter(
+            charging_mode=request.charging_mode,
+            queue_level='external_waiting',
+            created_at__lt=request.created_at
+        ).count()
+        
+        # 设置在外部等候区的位置
+        new_position = earlier_requests + 1
+        request.external_queue_position = new_position
+        request.estimated_wait_time = self._calculate_external_wait_time(request)
+        request.save()
+        
+        # 更新后续请求的位置
+        ChargingRequest.objects.filter(
+            charging_mode=request.charging_mode,
+            queue_level='external_waiting',
+            external_queue_position__gte=new_position
+        ).exclude(id=request.id).update(
+            external_queue_position=F('external_queue_position') + 1
+        )
+        
+        # 尝试转移到可用桩
+        self._try_transfer_to_pile_queue(request)
+        
+        # 发送重新调度通知
+        Notification.objects.create(
+            user=request.user,
+            type='queue_transfer',
+            message=f'由于充电桩 {original_pile.pile_id} 故障，您的请求 {request.queue_number} 已按时间顺序重新排队，当前位置：{request.get_queue_status_display()}'
+        )
+
+    def _schedule_resume_external_queue_calling(self, pile_type):
+        """安排恢复外部等候区叫号（在所有故障请求处理完毕后）"""
+        # 这里可以设置一个延迟任务或者在下次处理时检查
+        # 暂时直接恢复，实际可以根据业务需求调整
+        self._resume_external_queue_calling(pile_type)
+
+    def _resume_external_queue_calling(self, pile_type):
+        """恢复指定类型的外部等候区叫号"""
+        param_key = f'{pile_type}_external_queue_paused'
+        
+        from .models import SystemParameter
+        try:
+            param = SystemParameter.objects.get(param_key=param_key)
+            param.param_value = 'false'
+            param.save()
+            logger.info(f"已恢复 {pile_type} 外部等候区叫号")
+        except SystemParameter.DoesNotExist:
+            pass  # 参数不存在说明没有暂停过
+
+    def _send_fault_notifications(self, pile, current_charging, fault_queue_requests):
+        """发送故障相关通知"""
+        from .models import Notification
+        
+        # 给队列中的用户发送通知
+        for request in fault_queue_requests:
+            Notification.objects.create(
+                user=request.user,
+                type='pile_fault',
+                message=f'充电桩 {pile.pile_id} 发生故障，您的充电请求 {request.queue_number} 已重新调度。'
+            )
+
+    def handle_pile_recovery(self, pile):
+        """处理充电桩故障恢复"""
+        from django.db import transaction
+        
+        logger.info(f"检测到充电桩 {pile.pile_id} 故障恢复，开始恢复处理流程")
+        
+        with transaction.atomic():
+            # 1. 检查是否还有其他同类桩仍有排队车辆
+            same_type_piles = ChargingPile.objects.filter(
+                pile_type=pile.pile_type,
+                status='normal'
+            ).exclude(pile_id=pile.pile_id)
+            
+            has_queue = any(
+                ChargingRequest.objects.filter(
+                    charging_pile=p,
+                    queue_level='pile_queue'
+                ).exists() for p in same_type_piles
+            )
+            
+            if has_queue:
+                # 2. 如果有排队车辆，统一重新调度
+                logger.info(f"检测到其他 {pile.pile_type} 桩仍有排队，执行统一重新调度")
+                self._unified_reschedule_after_recovery(pile.pile_type)
+            
+            # 3. 恢复叫号服务
+            self._resume_external_queue_calling(pile.pile_type)
+            
+            # 4. 尝试处理外部等候区转移
+            self._process_external_queue_transfers(pile.pile_type)
+            
+            logger.info(f"充电桩 {pile.pile_id} 恢复处理完成")
+
+    def _unified_reschedule_after_recovery(self, pile_type):
+        """故障恢复后的统一重新调度"""
+        from .models import ChargingRequest
+        
+        # 获取所有同类型的正常桩队列中的请求
+        all_pile_requests = ChargingRequest.objects.filter(
+            charging_mode=pile_type,
+            queue_level='pile_queue'
+        ).order_by('created_at')  # 按时间顺序
+        
+        # 临时将所有请求移回外部等候区
+        for request in all_pile_requests:
+            request.queue_level = 'external_waiting'
+            request.charging_pile = None
+            request.pile_queue_position = 0
+            request.save()
+        
+        # 重新计算外部等候区位置
+        for i, request in enumerate(all_pile_requests, 1):
+            request.external_queue_position = i
+            request.estimated_wait_time = self._calculate_external_wait_time(request)
+            request.save()
+        
+        # 重新执行转移到桩队列的逻辑
+        self._process_external_queue_transfers(pile_type)
+        
+        logger.info(f"完成 {pile_type} 类型桩的统一重新调度，处理请求数: {len(all_pile_requests)}")
+
+    def is_external_queue_paused(self, pile_type):
+        """检查外部等候区是否暂停叫号"""
+        param_key = f'{pile_type}_external_queue_paused'
+        try:
+            from .models import SystemParameter
+            param = SystemParameter.objects.get(param_key=param_key)
+            return param.get_value() is True
+        except:
+            return False
 
 # 保持向后兼容的别名
 class ChargingQueueService(AdvancedChargingQueueService):

@@ -10,6 +10,8 @@ from django.db import transaction
 from django import forms
 from .models import ChargingPile, ChargingRequest, ChargingSession, SystemParameter, Notification
 from decimal import Decimal
+from django.http import JsonResponse
+from django.utils.safestring import mark_safe
 
 # 自定义系统参数表单
 class SystemParameterForm(ModelForm):
@@ -160,11 +162,93 @@ class SystemParameterAdmin(admin.ModelAdmin):
 
 @admin.register(ChargingPile)
 class ChargingPileAdmin(admin.ModelAdmin):
-    list_display = ['pile_id', 'pile_type', 'status', 'is_working', 'charging_power', 'max_queue_size', 'estimated_remaining_time', 'total_sessions', 'total_revenue']
+    list_display = ['pile_id', 'pile_type', 'status', 'is_working', 'charging_power', 'max_queue_size', 'queue_status_display', 'estimated_remaining_time', 'total_sessions', 'total_revenue']
     list_filter = ['pile_type', 'status', 'is_working']
     search_fields = ['pile_id']
-    readonly_fields = ['estimated_remaining_time', 'total_sessions', 'total_duration', 'total_energy', 'total_revenue', 'created_at', 'updated_at']
+    readonly_fields = ['estimated_remaining_time', 'total_sessions', 'total_duration', 'total_energy', 'total_revenue', 'current_charging_display', 'queue_detail_display', 'created_at', 'updated_at']
     list_editable = ['charging_power', 'max_queue_size']
+    
+    def queue_status_display(self, obj):
+        """显示队列状态摘要"""
+        queue_count = obj.get_queue_count()
+        current_charging = ChargingRequest.objects.filter(
+            charging_pile=obj,
+            current_status='charging'
+        ).first()
+        
+        status_parts = []
+        if current_charging:
+            progress = (current_charging.current_amount / current_charging.requested_amount) * 100
+            status_parts.append(f'充电中({progress:.1f}%)')
+        else:
+            status_parts.append('空闲' if obj.status == 'normal' else obj.get_status_display())
+            
+        if queue_count > 0:
+            status_parts.append(f'队列{queue_count}人')
+        
+        return ' | '.join(status_parts)
+    queue_status_display.short_description = '队列状态'
+    
+    def current_charging_display(self, obj):
+        """显示当前充电详情"""
+        current_charging = ChargingRequest.objects.filter(
+            charging_pile=obj,
+            current_status='charging'
+        ).first()
+        
+        if current_charging:
+            progress = (current_charging.current_amount / current_charging.requested_amount) * 100
+            return format_html(
+                '<div style="padding: 10px; background: #f8f9fa; border-radius: 5px;">'
+                '<strong>正在充电：</strong> {}<br>'
+                '<strong>用户：</strong> {}<br>'
+                '<strong>进度：</strong> {:.1f} / {:.1f} kWh ({:.1f}%)<br>'
+                '<strong>开始时间：</strong> {}<br>'
+                '<strong>预计剩余：</strong> {}分钟'
+                '</div>',
+                current_charging.queue_number,
+                current_charging.user.username,
+                current_charging.current_amount,
+                current_charging.requested_amount,
+                progress,
+                current_charging.start_time.strftime('%Y-%m-%d %H:%M:%S') if current_charging.start_time else 'N/A',
+                obj.estimated_remaining_time
+            )
+        else:
+            return format_html('<span style="color: #6c757d;">无充电任务</span>')
+    current_charging_display.short_description = '当前充电'
+    
+    def queue_detail_display(self, obj):
+        """显示详细队列信息"""
+        queue_requests = ChargingRequest.objects.filter(
+            charging_pile=obj,
+            queue_level='pile_queue'
+        ).order_by('pile_queue_position')[:5]  # 显示前5个
+        
+        if not queue_requests.exists():
+            return format_html('<span style="color: #6c757d;">队列为空</span>')
+        
+        html_parts = ['<div style="padding: 10px; background: #fff3cd; border-radius: 5px;">']
+        html_parts.append(f'<strong>队列容量：</strong> {queue_requests.count()}/{obj.max_queue_size}<br>')
+        html_parts.append('<strong>队列详情：</strong><br>')
+        
+        for req in queue_requests:
+            wait_time = req.estimated_wait_time
+            html_parts.append(
+                f'<span style="margin-left: 10px;">'
+                f'{req.pile_queue_position}. {req.queue_number} '
+                f'({req.user.username}) - '
+                f'{req.requested_amount}kWh, '
+                f'等待{wait_time}分钟'
+                f'</span><br>'
+            )
+        
+        if queue_requests.count() >= 5:
+            html_parts.append('<span style="color: #6c757d; margin-left: 10px;">...</span>')
+        
+        html_parts.append('</div>')
+        return format_html(''.join(html_parts))
+    queue_detail_display.short_description = '队列详情'
     
     # 按类型分组显示
     def get_queryset(self, request):
@@ -172,11 +256,88 @@ class ChargingPileAdmin(admin.ModelAdmin):
 
 @admin.register(ChargingRequest)
 class ChargingRequestAdmin(admin.ModelAdmin):
-    list_display = ['queue_number', 'user', 'vehicle', 'charging_mode', 'current_status', 'queue_level', 'progress_display', 'queue_status_display', 'created_at']
+    list_display = ['queue_number', 'user', 'vehicle', 'charging_mode', 'current_status', 'queue_level', 'queue_position_display', 'progress_display', 'queue_status_display', 'created_at']
     list_filter = ['charging_mode', 'current_status', 'queue_level', 'created_at']
     search_fields = ['queue_number', 'user__username', 'vehicle__license_plate']
-    readonly_fields = ['queue_number', 'queue_level', 'external_queue_position', 'pile_queue_position', 'estimated_wait_time', 'created_at', 'updated_at']
+    readonly_fields = ['queue_number', 'queue_level', 'external_queue_position', 'pile_queue_position', 'estimated_wait_time', 'queue_detail_display', 'created_at', 'updated_at']
     actions = ['update_progress_5kwh', 'update_progress_10kwh', 'set_progress_50percent', 'complete_charging_action']
+    
+    def queue_position_display(self, obj):
+        """显示队列位置"""
+        if obj.queue_level == 'external_waiting':
+            return format_html(
+                '<span style="background: #d1ecf1; padding: 2px 6px; border-radius: 3px; color: #0c5460;">'
+                '外部等候区 #{}'
+                '</span>',
+                obj.external_queue_position
+            )
+        elif obj.queue_level == 'pile_queue':
+            return format_html(
+                '<span style="background: #fff3cd; padding: 2px 6px; border-radius: 3px; color: #856404;">'
+                '桩{} #{}'
+                '</span>',
+                obj.charging_pile.pile_id if obj.charging_pile else 'N/A',
+                obj.pile_queue_position
+            )
+        elif obj.queue_level == 'charging':
+            return format_html(
+                '<span style="background: #d4edda; padding: 2px 6px; border-radius: 3px; color: #155724;">'
+                '充电中@{}'
+                '</span>',
+                obj.charging_pile.pile_id if obj.charging_pile else 'N/A'
+            )
+        else:
+            return format_html(
+                '<span style="background: #f8d7da; padding: 2px 6px; border-radius: 3px; color: #721c24;">'
+                '{}'
+                '</span>',
+                obj.get_queue_level_display()
+            )
+    queue_position_display.short_description = '队列位置'
+    
+    def queue_detail_display(self, obj):
+        """显示详细队列信息"""
+        html_parts = ['<div style="padding: 10px; background: #f8f9fa; border-radius: 5px;">']
+        
+        # 基本信息
+        html_parts.append(f'<strong>队列编号：</strong> {obj.queue_number}<br>')
+        html_parts.append(f'<strong>队列层级：</strong> {obj.get_queue_level_display()}<br>')
+        
+        # 根据不同层级显示不同信息
+        if obj.queue_level == 'external_waiting':
+            html_parts.append(f'<strong>外部等候区位置：</strong> 第{obj.external_queue_position}位<br>')
+            
+            # 显示同模式的外部等候区情况
+            same_mode_count = ChargingRequest.objects.filter(
+                charging_mode=obj.charging_mode,
+                queue_level='external_waiting'
+            ).count()
+            html_parts.append(f'<strong>同模式等待：</strong> 共{same_mode_count}人<br>')
+            
+        elif obj.queue_level == 'pile_queue':
+            html_parts.append(f'<strong>分配充电桩：</strong> {obj.charging_pile.pile_id}<br>')
+            html_parts.append(f'<strong>桩队列位置：</strong> 第{obj.pile_queue_position}位<br>')
+            
+            # 显示桩的状态
+            if obj.charging_pile:
+                pile_status = "正在使用" if obj.charging_pile.is_working else "空闲"
+                html_parts.append(f'<strong>桩状态：</strong> {pile_status}<br>')
+                html_parts.append(f'<strong>桩队列容量：</strong> {obj.charging_pile.get_queue_count()}/{obj.charging_pile.max_queue_size}<br>')
+            
+        elif obj.queue_level == 'charging':
+            html_parts.append(f'<strong>充电桩：</strong> {obj.charging_pile.pile_id}<br>')
+            if obj.start_time:
+                from django.utils import timezone
+                duration = timezone.now() - obj.start_time
+                html_parts.append(f'<strong>充电时长：</strong> {duration.total_seconds() // 60:.0f}分钟<br>')
+        
+        html_parts.append(f'<strong>预计等待时间：</strong> {obj.estimated_wait_time}分钟<br>')
+        html_parts.append(f'<strong>请求充电量：</strong> {obj.requested_amount} kWh<br>')
+        html_parts.append(f'<strong>当前充电量：</strong> {obj.current_amount} kWh<br>')
+        
+        html_parts.append('</div>')
+        return format_html(''.join(html_parts))
+    queue_detail_display.short_description = '队列详情'
     
     def queue_status_display(self, obj):
         """显示队列状态"""
@@ -189,10 +350,10 @@ class ChargingRequestAdmin(admin.ModelAdmin):
             percentage = (obj.current_amount / obj.requested_amount) * 100
             return format_html(
                 '<div style="width: 100px; height: 20px; background-color: #f0f0f0; border-radius: 10px; position: relative;">'
-                '<div style="width: {:.1f}%; height: 100%; background-color: #4CAF50; border-radius: 10px;"></div>'
-                '<span style="position: absolute; top: 0; left: 0; right: 0; text-align: center; line-height: 20px; font-size: 12px;">{:.1f}%</span>'
+                '<div style="width: {}%; height: 100%; background-color: #4CAF50; border-radius: 10px;"></div>'
+                '<span style="position: absolute; top: 0; left: 0; right: 0; text-align: center; line-height: 20px; font-size: 12px;">{}%</span>'
                 '</div>',
-                percentage, percentage
+                '{:.1f}'.format(percentage), '{:.1f}'.format(percentage)
             )
         elif obj.current_status == 'completed':
             return format_html('<span style="color: green;">✅ 已完成</span>')
@@ -318,3 +479,93 @@ class NotificationAdmin(admin.ModelAdmin):
     # 按创建时间倒序
     def get_queryset(self, request):
         return super().get_queryset(request).order_by('-created_at')
+
+# 添加队列状态管理视图
+class QueueStatusView:
+    """队列状态管理视图"""
+    
+    def changelist_view(self, request, extra_context=None):
+        """队列状态总览页面"""
+        from .services import AdvancedChargingQueueService
+        from .models import ChargingPile, ChargingRequest
+        
+        # 获取队列服务
+        queue_service = AdvancedChargingQueueService()
+        
+        # 获取快充和慢充的队列状态
+        fast_status = queue_service.get_queue_status('fast')
+        slow_status = queue_service.get_queue_status('slow')
+        
+        # 系统统计
+        stats = {
+            'total_piles': ChargingPile.objects.count(),
+            'working_piles': ChargingPile.objects.filter(is_working=True).count(),
+            'fault_piles': ChargingPile.objects.filter(status='fault').count(),
+            'offline_piles': ChargingPile.objects.filter(status='offline').count(),
+            'total_waiting': ChargingRequest.objects.filter(current_status='waiting').count(),
+            'total_charging': ChargingRequest.objects.filter(current_status='charging').count(),
+            'external_waiting': ChargingRequest.objects.filter(queue_level='external_waiting').count(),
+            'pile_queue_waiting': ChargingRequest.objects.filter(queue_level='pile_queue').count(),
+        }
+        
+        extra_context = extra_context or {}
+        extra_context.update({
+            'title': '充电队列状态总览',
+            'fast_status': fast_status,
+            'slow_status': slow_status,
+            'stats': stats,
+            'has_permission': True,
+        })
+        
+        return render(request, 'admin/charging/queue_status.html', extra_context)
+    
+    def refresh_view(self, request):
+        """刷新队列状态的AJAX接口"""
+        from .services import AdvancedChargingQueueService
+        
+        queue_service = AdvancedChargingQueueService()
+        fast_status = queue_service.get_queue_status('fast')
+        slow_status = queue_service.get_queue_status('slow')
+        
+        return JsonResponse({
+            'fast_status': fast_status,
+            'slow_status': slow_status,
+        })
+
+# 扩展admin site，添加队列状态视图
+from django.contrib.admin import AdminSite
+
+class ChargingAdminSite(AdminSite):
+    """自定义admin site，添加队列状态功能"""
+    
+    def get_urls(self):
+        urls = super().get_urls()
+        queue_view = QueueStatusView()
+        
+        custom_urls = [
+            path('charging/queue-status/', queue_view.changelist_view, name='charging_queue_status'),
+            path('charging/queue-status/refresh/', queue_view.refresh_view, name='charging_queue_refresh'),
+        ]
+        return custom_urls + urls
+    
+    def index(self, request, extra_context=None):
+        """自定义admin首页，添加队列状态链接"""
+        extra_context = extra_context or {}
+        extra_context['queue_status_url'] = '/admin/charging/queue-status/'
+        return super().index(request, extra_context)
+
+# 直接扩展默认admin site的URLs
+def get_urls_with_queue_status():
+    """为默认admin site添加队列状态URLs"""
+    urls = original_get_urls()
+    queue_view = QueueStatusView()
+    
+    custom_urls = [
+        path('charging/queue-status/', queue_view.changelist_view, name='charging_queue_status'),
+        path('charging/queue-status/refresh/', queue_view.refresh_view, name='charging_queue_refresh'),
+    ]
+    return custom_urls + urls
+
+# 替换admin site的get_urls方法
+original_get_urls = admin.site.get_urls
+admin.site.get_urls = get_urls_with_queue_status

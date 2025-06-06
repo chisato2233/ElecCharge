@@ -1,0 +1,59 @@
+{% extends "admin/index.html" %}
+{% load i18n admin_urls static admin_interface_tags %}
+
+{% block content %}
+<!-- 添加队列状态快速访问 -->
+<div class="dashboard-section" style="margin-bottom: 20px;">
+    <div style="background: var(--body-bg, #fff); border: 1px solid var(--border-color, #ddd); border-radius: 6px; padding: 20px;">
+        <h2 style="color: var(--primary, #417690); margin-bottom: 15px;">
+            ⚡ 系统状态监控
+        </h2>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+            <a href="{% url 'admin:charging_queue_status' %}" 
+               style="display: block; background: linear-gradient(135deg, var(--primary, #417690), #28a745); 
+                      color: white; text-decoration: none; padding: 15px; border-radius: 6px; 
+                      transition: transform 0.3s ease; text-align: center;">
+                <div style="font-size: 1.5rem; margin-bottom: 5px;">📊</div>
+                <div style="font-weight: 600;">队列状态总览</div>
+                <div style="font-size: 0.9rem; opacity: 0.9;">实时监控充电队列</div>
+            </a>
+            
+            <a href="{% url 'admin:charging_chargingpile_changelist' %}" 
+               style="display: block; background: linear-gradient(135deg, #17a2b8, #007bff); 
+                      color: white; text-decoration: none; padding: 15px; border-radius: 6px; 
+                      transition: transform 0.3s ease; text-align: center;">
+                <div style="font-size: 1.5rem; margin-bottom: 5px;">🔌</div>
+                <div style="font-weight: 600;">充电桩管理</div>
+                <div style="font-size: 0.9rem; opacity: 0.9;">管理充电桩状态</div>
+            </a>
+            
+            <a href="{% url 'admin:charging_chargingrequest_changelist' %}" 
+               style="display: block; background: linear-gradient(135deg, #fd7e14, #dc3545); 
+                      color: white; text-decoration: none; padding: 15px; border-radius: 6px; 
+                      transition: transform 0.3s ease; text-align: center;">
+                <div style="font-size: 1.5rem; margin-bottom: 5px;">🚗</div>
+                <div style="font-weight: 600;">充电请求</div>
+                <div style="font-size: 0.9rem; opacity: 0.9;">查看充电申请</div>
+            </a>
+            
+            <a href="{% url 'admin:charging_systemparameter_changelist' %}" 
+               style="display: block; background: linear-gradient(135deg, #6f42c1, #e83e8c); 
+                      color: white; text-decoration: none; padding: 15px; border-radius: 6px; 
+                      transition: transform 0.3s ease; text-align: center;">
+                <div style="font-size: 1.5rem; margin-bottom: 5px;">⚙️</div>
+                <div style="font-weight: 600;">系统参数</div>
+                <div style="font-size: 0.9rem; opacity: 0.9;">配置系统设置</div>
+            </a>
+        </div>
+    </div>
+</div>
+
+<style>
+.dashboard-section a:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+</style>
+
+{{ block.super }}
+{% endblock %} 

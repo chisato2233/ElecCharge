@@ -20,7 +20,7 @@ export default function AuthPage() {
   // 如果已经登录，重定向到仪表板
   useEffect(() => {
     if (isAuthenticated) {
-      router.push('/dashboard');
+      router.push('/');
     }
   }, [isAuthenticated, router]);
 
@@ -119,7 +119,7 @@ export default function AuthPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen flex items-center justify-center bg-white dark:bg-black py-12 px-4 sm:px-6 lg:px-8">
       {/* 主题切换按钮 */}
       <div className="absolute top-4 right-4">
         <ThemeToggle />
@@ -127,12 +127,15 @@ export default function AuthPage() {
 
       <div className="max-w-md w-full space-y-8">
         <div className="text-center">
-          <Zap className="mx-auto h-12 w-12 text-primary" />
+          <div className="relative mx-auto w-fit">
+            <Zap className="mx-auto h-12 w-12 text-primary" />
+            <div className="absolute inset-0 bg-primary opacity-20 blur-lg rounded-full"></div>
+          </div>
           <h2 className="mt-6 text-3xl font-extrabold text-foreground">
-            电动车充电站系统
+            Elecharge
           </h2>
           <p className="mt-2 text-sm text-muted-foreground">
-            登录或注册您的账号
+            智能充电站管理平台
           </p>
         </div>
 

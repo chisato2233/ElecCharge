@@ -93,6 +93,9 @@ fi
 echo "🧪 验证参数管理系统..."
 python manage.py test_new_parameters
 
+echo "🔍 检查系统参数完整性..."
+python manage.py check_system_parameters --fix --verbose
+
 echo "👤 创建超级用户(如果不存在)..."
 python manage.py shell -c "
 from accounts.models import User;
@@ -152,11 +155,12 @@ cleanup() {
 # 注册信号处理器
 trap cleanup SIGTERM SIGINT
 
-echo "⚡ 启动充电进度守护进程..."
-python manage.py update_charging_progress --daemon --interval 30 > /var/log/charging_progress.log 2>&1 &
+echo "⚡ 启动充电进度守护进程（包含故障检测）..."
+python manage.py update_charging_progress --daemon --interval 30 --enable-fault-detection > /var/log/charging_progress.log 2>&1 &
 CHARGING_PID=$!
 echo $CHARGING_PID > $CHARGING_PID_FILE
 echo "✅ 充电进度守护进程已启动 (PID: $CHARGING_PID)"
+echo "🔍 故障检测功能已启用"
 
 # 验证充电进程是否正常启动
 sleep 2
@@ -177,6 +181,11 @@ echo "📋 服务状态:"
 echo "   - 充电进度守护进程: PID $CHARGING_PID"
 echo "   - 日志文件: /var/log/charging_progress.log"
 echo "   - 参数管理系统: 已启用新版本 v2.0.0"
+echo "   - 故障检测系统: 已启用"
+echo ""
+echo "🧪 故障测试命令:"
+echo "   docker exec <container_name> python manage.py simulate_pile_fault FC001 --action fault"
+echo "   docker exec <container_name> python manage.py simulate_pile_fault FC001 --action recover"
 
 # 最后显示系统状态
 echo "📊 === 系统启动完成状态 ==="

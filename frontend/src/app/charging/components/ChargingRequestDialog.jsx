@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { Slider } from '@/components/ui/slider';
 import { 
   Dialog,
   DialogContent,
@@ -293,14 +294,26 @@ export default function ChargingRequestDialog({
 
                   <div className="space-y-2">
                     <Label htmlFor="requested_amount">充电量 (kWh)</Label>
-                    <Input
-                      type="number"
-                      min="1"
-                      max={selectedVehicle.battery_capacity}
-                      step="0.1"
-                      value={watchedValues.requested_amount}
-                      onChange={(e) => form.setValue('requested_amount', parseFloat(e.target.value) || 0)}
-                    />
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-gray-600 dark:text-gray-400">当前选择：</span>
+                        <span className="font-semibold text-lg">{parseFloat(watchedValues.requested_amount) || 1} kWh</span>
+                      </div>
+                      <div className="px-2">
+                        <Slider
+                          value={[parseFloat(watchedValues.requested_amount) || 1]}
+                          onValueChange={([value]) => form.setValue('requested_amount', parseFloat(value) || 1)}
+                          max={selectedVehicle.battery_capacity}
+                          min={1}
+                          step={.1}
+                          className="w-full"
+                        />
+                        <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-2">
+                          <span>1 kWh</span>
+                          <span>{selectedVehicle.battery_capacity} kWh</span>
+                        </div>
+                      </div>
+                    </div>
                     <p className="text-xs text-gray-500">
                       建议充电量：{Math.round(selectedVehicle.battery_capacity * 0.8)}kWh (80%)
                     </p>

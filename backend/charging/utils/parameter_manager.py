@@ -177,4 +177,15 @@ def get_system_config():
         'max_charging_time': ParameterManager.get_parameter('max_charging_time_per_session', 480, 'int'),
         'notification_enabled': ParameterManager.get_parameter('notification_enabled', True, 'boolean'),
         'auto_queue_management': ParameterManager.get_parameter('auto_queue_management', True, 'boolean'),
+    }
+
+
+def get_fault_handling_config():
+    """获取故障处理配置"""
+    return {
+        'dispatch_strategy': ParameterManager.get_parameter('fault_dispatch_strategy', 'priority'),
+        'detection_enabled': ParameterManager.get_parameter('fault_detection_enabled', True, 'boolean'),
+        'auto_recovery_enabled': ParameterManager.get_parameter('auto_recovery_enabled', True, 'boolean'),
+        'notification_delay': ParameterManager.get_parameter('fault_notification_delay', 0, 'int'),
+        'recovery_reschedule_enabled': ParameterManager.get_parameter('recovery_reschedule_enabled', True, 'boolean'),
     } 
