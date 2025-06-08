@@ -1,115 +1,53 @@
-from django.core.cache import cache
-from charging.models import SystemParameter
+"""
+弃用的配置管理器 - 仅保留向后兼容接口
+实际实现已迁移到 parameter_manager.py
+"""
+
+from .parameter_manager import ParameterManager
 import logging
 
 logger = logging.getLogger(__name__)
 
+# 仅保留向后兼容的接口
+
 class ConfigManager:
-    """系统配置管理器"""
+    """
+    弃用的配置管理器类
     
-    # 缓存键前缀
-    CACHE_PREFIX = 'system_param_'
-    CACHE_TIMEOUT = 300  # 5分钟缓存
-    
-    # 默认配置值
-    DEFAULT_CONFIG = {
-        'FastChargingPileNum': {'value': 2, 'type': 'int', 'description': '快充电桩数量'},
-        'TrickleChargingPileNum': {'value': 3, 'type': 'int', 'description': '慢充电桩数量'},
-        'WaitingAreaSize': {'value': 6, 'type': 'int', 'description': '等候区容量'},
-        'ChargingQueueLen': {'value': 2, 'type': 'int', 'description': '每桩排队队列长度'},
-        'max_charging_time_per_session': {'value': 480, 'type': 'int', 'description': '单次充电最大时间限制(分钟)'},
-        'notification_enabled': {'value': True, 'type': 'boolean', 'description': '是否启用通知功能'},
-        'auto_queue_management': {'value': True, 'type': 'boolean', 'description': '是否启用自动队列管理'},
-        'shortest_wait_time_threshold': {'value': 5, 'type': 'int', 'description': '最短等待时间阈值(分钟)'},
-        'fault_dispatch_strategy': {'value': 'priority', 'type': 'string', 'description': '故障调度策略(priority/time_order)'},
-        'fault_detection_enabled': {'value': True, 'type': 'boolean', 'description': '是否启用故障检测'},
-        'auto_recovery_enabled': {'value': True, 'type': 'boolean', 'description': '是否启用自动恢复处理'},
-        'fault_notification_delay': {'value': 0, 'type': 'int', 'description': '故障通知延迟时间(秒)'},
-        'recovery_reschedule_enabled': {'value': True, 'type': 'boolean', 'description': '恢复时是否重新调度队列'},
-    }
+    此类已弃用，请使用 charging.utils.parameter_manager.ParameterManager
+    保留此类仅为向后兼容，所有调用都会委托给新的参数管理器
+    """
     
     @classmethod
     def get_parameter(cls, key, default=None):
-        """获取系统参数"""
-        # 先从缓存获取
-        cache_key = f"{cls.CACHE_PREFIX}{key}"
-        cached_value = cache.get(cache_key)
-        if cached_value is not None:
-            return cached_value
-        
-        try:
-            # 从数据库获取
-            param = SystemParameter.objects.get(param_key=key)
-            value = param.get_value()
-            
-            # 存入缓存
-            cache.set(cache_key, value, cls.CACHE_TIMEOUT)
-            return value
-            
-        except SystemParameter.DoesNotExist:
-            # 如果参数不存在，使用默认值并创建
-            if key in cls.DEFAULT_CONFIG:
-                default_config = cls.DEFAULT_CONFIG[key]
-                cls.set_parameter(
-                    key, 
-                    default_config['value'], 
-                    default_config['type'],
-                    default_config['description']
-                )
-                return default_config['value']
-            
-            logger.warning(f"系统参数 {key} 不存在，使用默认值: {default}")
-            return default
+        """获取系统参数 - 委托给新的参数管理器"""
+        logger.warning(f"ConfigManager.get_parameter 已弃用，请使用 ParameterManager.get_parameter")
+        return ParameterManager.get_parameter(key, default)
     
     @classmethod
     def set_parameter(cls, key, value, param_type='string', description=''):
-        """设置系统参数"""
-        try:
-            param, created = SystemParameter.objects.get_or_create(
-                param_key=key,
-                defaults={
-                    'param_type': param_type,
-                    'description': description,
-                    'is_editable': True
-                }
-            )
-            param.set_value(value)
-            param.save()
-            
-            # 清除缓存
-            cache_key = f"{cls.CACHE_PREFIX}{key}"
-            cache.delete(cache_key)
-            
-            logger.info(f"系统参数 {key} 已更新为: {value}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"设置系统参数 {key} 失败: {str(e)}")
-            return False
-    
-    @classmethod
-    def get_all_parameters(cls):
-        """获取所有系统参数"""
-        params = {}
-        for param in SystemParameter.objects.all():
-            params[param.param_key] = param.get_value()
-        return params
+        """设置系统参数 - 委托给新的参数管理器"""
+        logger.warning(f"ConfigManager.set_parameter 已弃用，请使用 ParameterManager.set_parameter")
+        return ParameterManager.set_parameter(key, value, param_type, description)
     
     @classmethod
     def initialize_default_config(cls):
-        """初始化默认配置"""
-        for key, config in cls.DEFAULT_CONFIG.items():
-            if not SystemParameter.objects.filter(param_key=key).exists():
-                cls.set_parameter(
-                    key, 
-                    config['value'], 
-                    config['type'], 
-                    config['description']
-                )
+        """
+        初始化默认配置 - 已弃用
+        
+        请使用 reset_system_parameters 命令来初始化系统参数
+        """
+        logger.warning("ConfigManager.initialize_default_config 已弃用")
+        logger.info("请使用 'python manage.py reset_system_parameters --confirm' 来初始化系统参数")
+        # 空实现，不执行任何操作
 
-# 便捷访问函数
+# 向后兼容的便捷函数
 def get_config(key, default=None):
-    return ConfigManager.get_parameter(key, default)
+    """弃用的便捷函数，委托给新的参数管理器"""
+    logger.warning("get_config 函数已弃用，请使用 ParameterManager.get_parameter")
+    return ParameterManager.get_parameter(key, default)
 
 def set_config(key, value, param_type='string', description=''):
-    return ConfigManager.set_parameter(key, value, param_type, description)
+    """弃用的便捷函数，委托给新的参数管理器"""
+    logger.warning("set_config 函数已弃用，请使用 ParameterManager.set_parameter")
+    return ParameterManager.set_parameter(key, value, param_type, description)

@@ -143,6 +143,66 @@ def cancel_charging_request(request, request_id):
         'message': '充电请求已取消'
     })
 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def change_charging_mode(request, request_id):
+    """修改充电类型（仅限外部等候区的请求）"""
+    try:
+        charging_request = get_object_or_404(
+            ChargingRequest,
+            id=request_id,
+            user=request.user
+        )
+        
+        new_charging_mode = request.data.get('charging_mode')
+        if not new_charging_mode:
+            return Response({
+                'success': False,
+                'error': {
+                    'code': 'MISSING_PARAMETER',
+                    'message': '缺少充电类型参数'
+                }
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if new_charging_mode not in ['fast', 'slow']:
+            return Response({
+                'success': False,
+                'error': {
+                    'code': 'INVALID_PARAMETER',
+                    'message': '充电类型必须是 fast 或 slow'
+                }
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # 使用队列服务修改充电类型
+        queue_service = AdvancedChargingQueueService()
+        updated_request = queue_service.change_charging_mode(charging_request, new_charging_mode)
+        
+        # 返回更新后的请求信息
+        serializer = ChargingRequestSerializer(updated_request)
+        
+        return Response({
+            'success': True,
+            'message': '充电类型修改成功',
+            'data': serializer.data
+        })
+        
+    except ValueError as e:
+        return Response({
+            'success': False,
+            'error': {
+                'code': 'VALIDATION_ERROR',
+                'message': str(e)
+            }
+        }, status=status.HTTP_400_BAD_REQUEST)
+    except Exception as e:
+        return Response({
+            'success': False,
+            'error': {
+                'code': 'INTERNAL_ERROR',
+                'message': f'修改充电类型失败: {str(e)}'
+            }
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def charging_request_status(request):
@@ -421,7 +481,7 @@ def enhanced_queue_status(request):
     """获取增强的排队状态（支持多级队列）"""
     try:
         queue_service = AdvancedChargingQueueService()
-        queue_data = queue_service.get_queue_status()
+        queue_data = queue_service.get_enhanced_queue_status()
         
         return Response({
             'success': True,
@@ -530,11 +590,18 @@ def system_parameters(request):
             'waiting_area_size': SystemParameter.objects.get(param_key='WaitingAreaSize').get_value(),
         }
         
+        # 获取充电功率参数
+        charging_power_params = {
+            'fast_charging_power': SystemParameter.objects.get(param_key='fast_charging_power').get_value(),
+            'slow_charging_power': SystemParameter.objects.get(param_key='slow_charging_power').get_value(),
+        }
+        
         return Response({
             'success': True,
             'data': {
                 'pricing': pricing_params,
-                'capacity': capacity_params
+                'capacity': capacity_params,
+                'charging_power': charging_power_params
             }
         })
         
@@ -598,12 +665,16 @@ class BillListView(generics.ListAPIView):
         })
 
 class ChargingHistoryView(generics.ListAPIView):
-    """用户充电历史记录视图 - 扩展版本"""
-    serializer_class = ChargingSessionSerializer
+    """用户充电历史记录视图 - 基于充电请求"""
+    serializer_class = ChargingRequestSerializer
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
-        queryset = ChargingSession.objects.filter(user=self.request.user)
+        # 基于ChargingRequest而不是ChargingSession
+        queryset = ChargingRequest.objects.filter(
+            user=self.request.user,
+            current_status__in=['completed', 'cancelled']  # 只显示已完成或已取消的请求
+        ).select_related('charging_pile', 'vehicle', 'session')
         
         # 多种筛选条件
         pile_type = self.request.query_params.get('pile_type')  # fast/slow
@@ -615,31 +686,35 @@ class ChargingHistoryView(generics.ListAPIView):
         min_cost = self.request.query_params.get('min_cost')
         max_cost = self.request.query_params.get('max_cost')
         
-        # 只有当pile_type存在且不为'all'时才应用筛选
+        # 筛选条件
         if pile_type and pile_type != 'all':
-            queryset = queryset.filter(pile__pile_type=pile_type)
+            queryset = queryset.filter(charging_mode=pile_type)
         if pile_id:
-            queryset = queryset.filter(pile__pile_id=pile_id)
+            queryset = queryset.filter(charging_pile__pile_id=pile_id)
         if start_date:
             queryset = queryset.filter(start_time__date__gte=start_date)
         if end_date:
             queryset = queryset.filter(start_time__date__lte=end_date)
         if min_amount:
-            queryset = queryset.filter(charging_amount__gte=float(min_amount))
+            queryset = queryset.filter(current_amount__gte=float(min_amount))
         if max_amount:
-            queryset = queryset.filter(charging_amount__lte=float(max_amount))
+            queryset = queryset.filter(current_amount__lte=float(max_amount))
         if min_cost:
-            queryset = queryset.filter(total_cost__gte=float(min_cost))
+            queryset = queryset.filter(session__total_cost__gte=float(min_cost))
         if max_cost:
-            queryset = queryset.filter(total_cost__lte=float(max_cost))
+            queryset = queryset.filter(session__total_cost__lte=float(max_cost))
             
-        # 排序
-        order_by = self.request.query_params.get('order_by', '-start_time')
-        if order_by in ['start_time', '-start_time', 'charging_amount', '-charging_amount', 
-                       'total_cost', '-total_cost', 'charging_duration', '-charging_duration']:
+        # 排序 - 调整字段名以匹配ChargingRequest
+        order_by = self.request.query_params.get('order_by', '-created_at')
+        valid_order_fields = [
+            'start_time', '-start_time', 'current_amount', '-current_amount', 
+            'created_at', '-created_at', 'updated_at', '-updated_at',
+            'session__total_cost', '-session__total_cost'
+        ]
+        if order_by in valid_order_fields:
             queryset = queryset.order_by(order_by)
         else:
-            queryset = queryset.order_by('-start_time')
+            queryset = queryset.order_by('-created_at')
             
         return queryset
     
@@ -658,27 +733,28 @@ class ChargingHistoryView(generics.ListAPIView):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def charging_statistics(request):
-    """用户充电统计分析"""
+    """用户充电统计分析 - 基于充电请求"""
     user = request.user
     
     # 时间范围参数
     days = int(request.GET.get('days', 30))  # 默认30天
     start_date = timezone.now() - timezone.timedelta(days=days)
     
-    # 基础查询
-    sessions = ChargingSession.objects.filter(
+    # 基础查询 - 使用ChargingRequest
+    requests = ChargingRequest.objects.filter(
         user=user,
-        start_time__gte=start_date
-    )
+        current_status='completed',  # 只统计已完成的请求
+        end_time__gte=start_date
+    ).select_related('session')
     
     # 基础统计
-    total_sessions = sessions.count()
-    if total_sessions == 0:
+    total_requests = requests.count()
+    if total_requests == 0:
         return Response({
             'success': True,
             'data': {
                 'period_days': days,
-                'total_sessions': 0,
+                'total_requests': 0,
                 'statistics': None
             }
         })
@@ -687,77 +763,93 @@ def charging_statistics(request):
     from decimal import Decimal
     
     # 聚合统计
-    aggregates = sessions.aggregate(
-        total_amount=Sum('charging_amount'),
-        total_cost=Sum('total_cost'),
-        total_duration=Sum('charging_duration'),
-        avg_amount=Avg('charging_amount'),
-        avg_cost=Avg('total_cost'),
-        avg_duration=Avg('charging_duration'),
-        max_amount=Max('charging_amount'),
-        min_amount=Min('charging_amount'),
-        max_cost=Max('total_cost'),
-        min_cost=Min('total_cost')
+    aggregates = requests.aggregate(
+        total_amount=Sum('current_amount'),
+        avg_amount=Avg('current_amount'),
+        max_amount=Max('current_amount'),
+        min_amount=Min('current_amount'),
     )
     
-    # 按充电模式统计
-    mode_stats = sessions.values('pile__pile_type').annotate(
-        count=Count('id'),
-        total_amount=Sum('charging_amount'),
-        total_cost=Sum('total_cost'),
-        avg_amount=Avg('charging_amount'),
-        avg_cost=Avg('total_cost')
+    # 费用统计（需要通过session）
+    cost_stats = requests.filter(session__isnull=False).aggregate(
+        total_cost=Sum('session__total_cost'),
+        avg_cost=Avg('session__total_cost'),
+        max_cost=Max('session__total_cost'),
+        min_cost=Min('session__total_cost'),
+        total_duration=Sum('session__charging_duration'),
+        avg_duration=Avg('session__charging_duration')
     )
+    
+    # 合并统计结果
+    aggregates.update(cost_stats)
+    
+    # 按充电模式统计
+    mode_stats = requests.values('charging_mode').annotate(
+        count=Count('id'),
+        total_amount=Sum('current_amount'),
+        avg_amount=Avg('current_amount'),
+    ).order_by('charging_mode')
+    
+    # 为模式统计添加费用信息
+    mode_stats_with_cost = []
+    for mode_stat in mode_stats:
+        mode_requests = requests.filter(charging_mode=mode_stat['charging_mode'], session__isnull=False)
+        cost_data = mode_requests.aggregate(
+            total_cost=Sum('session__total_cost'),
+            avg_cost=Avg('session__total_cost')
+        )
+        mode_stat.update(cost_data)
+        mode_stat['mode_display'] = '快充' if mode_stat['charging_mode'] == 'fast' else '慢充'
+        mode_stats_with_cost.append(mode_stat)
     
     # 按月份统计（近6个月）
     from django.db.models import TruncMonth
-    monthly_stats = sessions.filter(
-        start_time__gte=timezone.now() - timezone.timedelta(days=180)
+    monthly_stats = requests.filter(
+        end_time__gte=timezone.now() - timezone.timedelta(days=180)
     ).annotate(
-        month=TruncMonth('start_time')
+        month=TruncMonth('end_time')
     ).values('month').annotate(
         count=Count('id'),
-        total_amount=Sum('charging_amount'),
-        total_cost=Sum('total_cost')
+        total_amount=Sum('current_amount')
     ).order_by('month')
     
     # 按星期几统计
     from django.db.models import Extract
-    weekday_stats = sessions.annotate(
-        weekday=Extract('start_time', 'week_day')
+    weekday_stats = requests.annotate(
+        weekday=Extract('end_time', 'week_day')
     ).values('weekday').annotate(
         count=Count('id'),
-        avg_amount=Avg('charging_amount')
+        avg_amount=Avg('current_amount')
     ).order_by('weekday')
     
     # 按小时统计（充电习惯）
-    hour_stats = sessions.annotate(
-        hour=Extract('start_time', 'hour')
+    hour_stats = requests.annotate(
+        hour=Extract('end_time', 'hour')
     ).values('hour').annotate(
         count=Count('id')
     ).order_by('hour')
     
     # 最常用的充电桩
-    pile_stats = sessions.values(
-        'pile__pile_id', 'pile__pile_type'
+    pile_stats = requests.filter(charging_pile__isnull=False).values(
+        'charging_pile__pile_id', 'charging_pile__pile_type'
     ).annotate(
         count=Count('id'),
-        total_amount=Sum('charging_amount')
+        total_amount=Sum('current_amount')
     ).order_by('-count')[:5]
     
-    # 费用分析
-    cost_breakdown = sessions.aggregate(
-        total_peak_cost=Sum('peak_cost'),
-        total_normal_cost=Sum('normal_cost'),
-        total_valley_cost=Sum('valley_cost'),
-        total_service_cost=Sum('service_cost')
+    # 费用分析（通过session获取）
+    cost_breakdown = requests.filter(session__isnull=False).aggregate(
+        total_peak_cost=Sum('session__peak_cost'),
+        total_normal_cost=Sum('session__normal_cost'),
+        total_valley_cost=Sum('session__valley_cost'),
+        total_service_cost=Sum('session__service_cost')
     )
     
     return Response({
         'success': True,
         'data': {
             'period_days': days,
-            'total_sessions': total_sessions,
+            'total_requests': total_requests,
             'statistics': {
                 # 基础统计
                 'total_amount': float(aggregates['total_amount'] or 0),
@@ -772,31 +864,18 @@ def charging_statistics(request):
                 'min_cost': float(aggregates['min_cost'] or 0),
                 
                 # 频率统计
-                'avg_sessions_per_week': round(total_sessions / (days / 7), 2),
+                'avg_requests_per_week': round(total_requests / (days / 7), 2),
                 'avg_amount_per_week': round(float(aggregates['total_amount'] or 0) / (days / 7), 2),
                 
                 # 按模式统计
-                'mode_statistics': [
-                    {
-                        'mode': stat['pile__pile_type'],
-                        'mode_name': '快充' if stat['pile__pile_type'] == 'fast' else '慢充',
-                        'count': stat['count'],
-                        'total_amount': float(stat['total_amount'] or 0),
-                        'total_cost': float(stat['total_cost'] or 0),
-                        'avg_amount': float(stat['avg_amount'] or 0),
-                        'avg_cost': float(stat['avg_cost'] or 0),
-                        'percentage': round((stat['count'] / total_sessions) * 100, 1)
-                    }
-                    for stat in mode_stats
-                ],
+                'mode_statistics': mode_stats_with_cost,
                 
                 # 月度趋势
                 'monthly_trends': [
                     {
                         'month': stat['month'].strftime('%Y-%m'),
                         'count': stat['count'],
-                        'total_amount': float(stat['total_amount'] or 0),
-                        'total_cost': float(stat['total_cost'] or 0)
+                        'total_amount': float(stat['total_amount'] or 0)
                     }
                     for stat in monthly_stats
                 ],
@@ -824,8 +903,8 @@ def charging_statistics(request):
                 # 常用充电桩
                 'favorite_piles': [
                     {
-                        'pile_id': stat['pile__pile_id'],
-                        'pile_type': '快充' if stat['pile__pile_type'] == 'fast' else '慢充',
+                        'pile_id': stat['charging_pile__pile_id'],
+                        'pile_type': '快充' if stat['charging_pile__pile_type'] == 'fast' else '慢充',
                         'usage_count': stat['count'],
                         'total_amount': float(stat['total_amount'] or 0)
                     }
@@ -850,33 +929,36 @@ def charging_statistics(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def charging_summary(request):
-    """用户充电概要信息 - 简化版统计"""
+    """用户充电概要信息 - 简化版统计，基于充电请求"""
     user = request.user
     
-    # 获取所有充电记录
-    all_sessions = ChargingSession.objects.filter(user=user)
+    # 获取所有已完成的充电请求
+    all_requests = ChargingRequest.objects.filter(
+        user=user, 
+        current_status='completed'
+    )
     
     # 近30天记录
-    recent_sessions = all_sessions.filter(
-        start_time__gte=timezone.now() - timezone.timedelta(days=30)
+    recent_requests = all_requests.filter(
+        end_time__gte=timezone.now() - timezone.timedelta(days=30)
     )
     
     from django.db.models import Sum, Count, Avg
     
     # 基础统计
-    total_sessions = all_sessions.count()
-    recent_sessions_count = recent_sessions.count()
+    total_requests = all_requests.count()
+    recent_requests_count = recent_requests.count()
     
-    if total_sessions == 0:
+    if total_requests == 0:
         return Response({
             'success': True,
             'data': {
-                'total_sessions': 0,
-                'recent_sessions': 0,
+                'total_requests': 0,
+                'recent_requests': 0,
                 'summary': {
                     'total_amount': 0,
                     'total_cost': 0,
-                    'avg_cost_per_session': 0,
+                    'avg_cost_per_request': 0,
                     'most_used_mode': None,
                     'recent_activity': 'inactive'
                 }
@@ -884,57 +966,56 @@ def charging_summary(request):
         })
     
     # 总体统计
-    total_stats = all_sessions.aggregate(
-        total_amount=Sum('charging_amount'),
-        total_cost=Sum('total_cost')
+    total_stats = all_requests.aggregate(
+        total_amount=Sum('current_amount')
     )
     
-    # 分别计算平均费用，避免聚合冲突
-    avg_cost = 0
-    if total_sessions > 0:
-        avg_cost_result = all_sessions.aggregate(avg_cost=Avg('total_cost'))
-        avg_cost = avg_cost_result['avg_cost'] or 0
+    # 费用统计（通过session）
+    cost_stats = all_requests.filter(session__isnull=False).aggregate(
+        total_cost=Sum('session__total_cost'),
+        avg_cost=Avg('session__total_cost')
+    )
     
     # 最常用模式
     from django.db.models import Count
-    mode_usage = all_sessions.values('pile__pile_type').annotate(
+    mode_usage = all_requests.values('charging_mode').annotate(
         count=Count('id')
     ).order_by('-count').first()
     
     most_used_mode = None
     if mode_usage:
-        most_used_mode = '快充' if mode_usage['pile__pile_type'] == 'fast' else '慢充'
+        most_used_mode = '快充' if mode_usage['charging_mode'] == 'fast' else '慢充'
     
     # 活跃度评估
-    if recent_sessions_count >= 4:
+    if recent_requests_count >= 4:
         activity_level = 'very_active'  # 非常活跃
-    elif recent_sessions_count >= 2:
+    elif recent_requests_count >= 2:
         activity_level = 'active'       # 活跃
-    elif recent_sessions_count >= 1:
+    elif recent_requests_count >= 1:
         activity_level = 'moderate'     # 一般
     else:
         activity_level = 'inactive'     # 不活跃
     
     # 最近一次充电
-    last_session = all_sessions.order_by('-start_time').first()
+    last_request = all_requests.order_by('-end_time').first()
     last_charging_info = None
-    if last_session:
+    if last_request:
         last_charging_info = {
-            'date': last_session.start_time.date(),
-            'amount': last_session.charging_amount,
-            'cost': float(last_session.total_cost),
-            'pile_type': '快充' if last_session.pile.pile_type == 'fast' else '慢充'
+            'date': last_request.end_time.date() if last_request.end_time else last_request.created_at.date(),
+            'amount': last_request.current_amount,
+            'cost': float(last_request.session.total_cost) if hasattr(last_request, 'session') and last_request.session else 0,
+            'pile_type': '快充' if last_request.charging_mode == 'fast' else '慢充'
         }
     
     return Response({
         'success': True,
         'data': {
-            'total_sessions': total_sessions,
-            'recent_sessions': recent_sessions_count,
+            'total_requests': total_requests,
+            'recent_requests': recent_requests_count,
             'summary': {
                 'total_amount': float(total_stats['total_amount'] or 0),
-                'total_cost': float(total_stats['total_cost'] or 0),
-                'avg_cost_per_session': avg_cost,
+                'total_cost': float(cost_stats['total_cost'] or 0),
+                'avg_cost_per_request': float(cost_stats['avg_cost'] or 0),
                 'most_used_mode': most_used_mode,
                 'activity_level': activity_level,
                 'last_charging': last_charging_info
@@ -945,13 +1026,16 @@ def charging_summary(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def export_charging_history(request):
-    """导出充电历史记录（CSV格式）"""
+    """导出充电历史记录（CSV格式）- 基于充电请求"""
     import csv
     from django.http import HttpResponse
     
     user = request.user
     
-    queryset = ChargingSession.objects.filter(user=user)
+    queryset = ChargingRequest.objects.filter(
+        user=user,
+        current_status__in=['completed', 'cancelled']
+    ).select_related('charging_pile', 'session')
     
     # 获取查询参数 - 与ChargingHistoryView保持一致
     pile_type = request.GET.get('pile_type')
@@ -966,28 +1050,31 @@ def export_charging_history(request):
     
     # 应用筛选条件
     if pile_type and pile_type != 'all':
-        queryset = queryset.filter(pile__pile_type=pile_type)
+        queryset = queryset.filter(charging_mode=pile_type)
     if pile_id:
-        queryset = queryset.filter(pile__pile_id=pile_id)
+        queryset = queryset.filter(charging_pile__pile_id=pile_id)
     if start_date:
         queryset = queryset.filter(start_time__date__gte=start_date)
     if end_date:
         queryset = queryset.filter(start_time__date__lte=end_date)
     if min_amount:
-        queryset = queryset.filter(charging_amount__gte=float(min_amount))
+        queryset = queryset.filter(current_amount__gte=float(min_amount))
     if max_amount:
-        queryset = queryset.filter(charging_amount__lte=float(max_amount))
+        queryset = queryset.filter(current_amount__lte=float(max_amount))
     if min_cost:
-        queryset = queryset.filter(total_cost__gte=float(min_cost))
+        queryset = queryset.filter(session__total_cost__gte=float(min_cost))
     if max_cost:
-        queryset = queryset.filter(total_cost__lte=float(max_cost))
+        queryset = queryset.filter(session__total_cost__lte=float(max_cost))
     
     # 排序
-    if order_by in ['start_time', '-start_time', 'charging_amount', '-charging_amount', 
-                   'total_cost', '-total_cost', 'charging_duration', '-charging_duration']:
+    valid_order_fields = [
+        'start_time', '-start_time', 'current_amount', '-current_amount', 
+        'created_at', '-created_at', 'session__total_cost', '-session__total_cost'
+    ]
+    if order_by in valid_order_fields:
         queryset = queryset.order_by(order_by)
     else:
-        queryset = queryset.order_by('-start_time')
+        queryset = queryset.order_by('-created_at')
     
     # 创建CSV响应
     response = HttpResponse(content_type='text/csv; charset=utf-8')
@@ -1006,20 +1093,23 @@ def export_charging_history(request):
     ])
     
     # 写入数据行
-    for session in queryset:
+    for request in queryset:
+        # 获取会话数据（如果存在）
+        session = getattr(request, 'session', None)
+        
         writer.writerow([
-            session.start_time.strftime('%Y-%m-%d %H:%M:%S'),
-            session.end_time.strftime('%Y-%m-%d %H:%M:%S') if session.end_time else '',
-            session.pile.pile_id,
-            '快充' if session.pile.pile_type == 'fast' else '慢充',
-            session.charging_amount,
-            round(session.charging_duration, 2),
-            float(session.peak_cost),
-            float(session.normal_cost),
-            float(session.valley_cost),
-            float(session.service_cost),
-            float(session.total_cost),
-            session.request.queue_number if session.request else ''
+            request.start_time.strftime('%Y-%m-%d %H:%M:%S') if request.start_time else '',
+            request.end_time.strftime('%Y-%m-%d %H:%M:%S') if request.end_time else '',
+            request.charging_pile.pile_id if request.charging_pile else '',
+            '快充' if request.charging_mode == 'fast' else '慢充',
+            request.current_amount,
+            round(session.charging_duration, 2) if session else 0,
+            float(session.peak_cost) if session else 0,
+            float(session.normal_cost) if session else 0,
+            float(session.valley_cost) if session else 0,
+            float(session.service_cost) if session else 0,
+            float(session.total_cost) if session else 0,
+            request.queue_number
         ])
     
     return response

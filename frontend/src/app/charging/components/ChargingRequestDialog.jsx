@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,6 +32,12 @@ import { BgAnimateButton } from '@/components/ui/bg-animate-button';
 import { Zap, Car, Clock, DollarSign, Battery, Users, AlertTriangle, Plus } from 'lucide-react';
 import { chargingAPI } from '@/lib/charging';
 import { toast } from 'sonner';
+import { 
+  estimateChargingRequest, 
+  formatTimeEstimate,
+  formatCurrency,
+  getOptimalChargingTimeSuggestion 
+} from '@/lib/chargingEstimator';
 
 export default function ChargingRequestDialog({ 
   vehicles, 
@@ -44,6 +50,8 @@ export default function ChargingRequestDialog({
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [requestData, setRequestData] = useState(null);
+  const [estimation, setEstimation] = useState(null);
+  const [enhancedQueueData, setEnhancedQueueData] = useState(null);
 
   const form = useForm({
     defaultValues: {
@@ -55,6 +63,48 @@ export default function ChargingRequestDialog({
   });
 
   const watchedValues = form.watch();
+
+  // 获取增强队列数据
+  const fetchEnhancedQueueData = async () => {
+    try {
+      const response = await chargingAPI.getEnhancedQueueStatus();
+      if (response.success) {
+        setEnhancedQueueData(response.data);
+        return response.data;
+      }
+    } catch (error) {
+      console.error('获取增强队列数据失败:', error);
+    }
+    return null;
+  };
+
+  // 实时更新估算
+  useEffect(() => {
+    if (watchedValues.requested_amount && watchedValues.charging_mode && systemParams) {
+      const updateEstimation = async () => {
+        const requestData = {
+          charging_mode: watchedValues.charging_mode,
+          requested_amount: parseFloat(watchedValues.requested_amount),
+          start_time: new Date()
+        };
+        
+        // 首先尝试使用增强队列数据进行精确估算
+        let queueDataForEstimation = enhancedQueueData || queueStatus;
+        if (!enhancedQueueData) {
+          // 如果没有增强数据，尝试获取
+          const enhancedData = await fetchEnhancedQueueData();
+          if (enhancedData) {
+            queueDataForEstimation = enhancedData;
+          }
+        }
+        
+        const newEstimation = estimateChargingRequest(requestData, systemParams, queueDataForEstimation);
+        setEstimation(newEstimation);
+      };
+      
+      updateEstimation();
+    }
+  }, [watchedValues.requested_amount, watchedValues.charging_mode, systemParams, queueStatus, enhancedQueueData]);
 
   // 获取可用车辆（排除已有活跃请求的车辆）
   const getAvailableVehicles = () => {
@@ -96,9 +146,12 @@ export default function ChargingRequestDialog({
     if (!queueStatus) return 0;
     
     const mode = watchedValues.charging_mode;
-    const modeData = mode === 'fast' ? queueStatus.fast_charging : queueStatus.slow_charging;
+    // 适配新的数据结构：外部等候区 + 桩队列等待时间
+    const externalWaitTime = (queueStatus.external_queue?.total_count || 0) * 15; // 外部等候区平均15分钟
+    const pileQueueData = mode === 'fast' ? queueStatus.pile_queues?.fast : queueStatus.pile_queues?.slow;
+    const pileWaitTime = (pileQueueData?.waiting_count || 0) * 30; // 桩队列平均30分钟
     
-    return modeData ? modeData.waiting_count * 30 : 0; // 假设每个请求平均30分钟
+    return externalWaitTime + pileWaitTime;
   };
 
   const formatTimeEstimate = (minutes) => {
@@ -165,6 +218,20 @@ export default function ChargingRequestDialog({
   const selectedVehicle = vehicles.find(v => v.id.toString() === watchedValues.vehicle_id);
   const estimatedCost = calculateEstimatedCost();
   const waitTime = getQueueWaitTime();
+  
+  // 获取充电时间建议
+  const timeSuggestions = getOptimalChargingTimeSuggestion(systemParams?.pricing);
+
+  // 获取充电功率
+  const getChargingPower = (mode) => {
+    if (!systemParams || !systemParams.charging_power) {
+      // 默认值
+      return mode === 'fast' ? 120 : 7;
+    }
+    return mode === 'fast' 
+      ? systemParams.charging_power.fast_charging_power || 120
+      : systemParams.charging_power.slow_charging_power || 7;
+  };
 
   return (
     <>
@@ -279,13 +346,13 @@ export default function ChargingRequestDialog({
                         <SelectItem value="fast">
                           <div className="flex items-center">
                             <Zap className="mr-2 h-4 w-4" />
-                            快充 (120kW)
+                            快充 ({getChargingPower('fast')}kW)
                           </div>
                         </SelectItem>
                         <SelectItem value="slow">
                           <div className="flex items-center">
                             <Battery className="mr-2 h-4 w-4" />
-                            慢充 (7kW)
+                            慢充 ({getChargingPower('slow')}kW)
                           </div>
                         </SelectItem>
                       </SelectContent>
@@ -325,27 +392,122 @@ export default function ChargingRequestDialog({
                   <CardHeader className="pb-3">
                     <CardTitle className="text-sm flex items-center">
                       <Clock className="mr-2 h-4 w-4" />
-                      预计信息
+                      精确估算
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="flex justify-between">
-                      <span className="text-sm text-gray-600 dark:text-gray-400">预计费用：</span>
-                      <span className="font-semibold">¥{estimatedCost.toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-sm text-gray-600 dark:text-gray-400">预计等待：</span>
-                      <span className="font-semibold">{formatTimeEstimate(waitTime)}</span>
-                    </div>
-                    {queueStatus && (
-                      <div className="flex justify-between">
-                        <span className="text-sm text-gray-600 dark:text-gray-400">当前排队：</span>
-                        <span className="font-semibold">
-                          {watchedValues.charging_mode === 'fast' 
-                            ? queueStatus.fast_charging?.waiting_count || 0
-                            : queueStatus.slow_charging?.waiting_count || 0
-                          } 人
-                        </span>
+                  <CardContent className="space-y-4">
+                    {estimation && !estimation.error ? (
+                      <>
+                        {/* 基础信息 */}
+                        <div className="grid grid-cols-2 gap-4 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-gray-600 dark:text-gray-400">预计费用：</span>
+                            <span className="font-semibold text-green-600">
+                              {formatCurrency(estimation.summary.total_cost)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600 dark:text-gray-400">总用时：</span>
+                            <span className="font-semibold">
+                              {estimation.summary.total_time_display}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600 dark:text-gray-400">等待时间：</span>
+                            <span className="font-semibold text-amber-600">
+                              {estimation.summary.wait_time_display}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600 dark:text-gray-400">充电时间：</span>
+                            <span className="font-semibold text-blue-600">
+                              {estimation.summary.charging_time_display}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* 队列详情 */}
+                        {estimation.wait_time && (
+                          <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-3">
+                            <div className="text-sm space-y-1">
+                              <div className="flex justify-between">
+                                <span className="text-blue-700 dark:text-blue-300">排队位置：</span>
+                                <span className="font-medium">第 {estimation.wait_time.queue_position} 位</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-blue-700 dark:text-blue-300">前方等待：</span>
+                                <span className="font-medium">{estimation.wait_time.ahead_count} 人</span>
+                              </div>
+                              {estimation.wait_time.best_pile && (
+                                <div className="flex justify-between">
+                                  <span className="text-blue-700 dark:text-blue-300">推荐桩：</span>
+                                  <span className="font-medium">{estimation.wait_time.best_pile.pile_id}</span>
+                                </div>
+                              )}
+                              <div className="text-xs text-blue-600 dark:text-blue-400 mt-2 border-t pt-2">
+                                <div className="font-medium mb-1">等待时间详情：</div>
+                                <div>{estimation.wait_time.pile_details}</div>
+                                {estimation.wait_time.additional_queue_wait > 0 && (
+                                  <div>外部等候区: +{estimation.wait_time.additional_queue_wait}分钟</div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* 费用明细 */}
+                        {estimation.cost_breakdown && (
+                          <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-3">
+                            <div className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">
+                              费用明细 (基于预计充电时间段)
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                              {estimation.cost_breakdown.peak_cost > 0 && (
+                                <div className="flex justify-between">
+                                  <span className="text-red-600">峰时：</span>
+                                  <span>{formatCurrency(estimation.cost_breakdown.peak_cost)}</span>
+                                </div>
+                              )}
+                              {estimation.cost_breakdown.normal_cost > 0 && (
+                                <div className="flex justify-between">
+                                  <span className="text-yellow-600">平时：</span>
+                                  <span>{formatCurrency(estimation.cost_breakdown.normal_cost)}</span>
+                                </div>
+                              )}
+                              {estimation.cost_breakdown.valley_cost > 0 && (
+                                <div className="flex justify-between">
+                                  <span className="text-green-600">谷时：</span>
+                                  <span>{formatCurrency(estimation.cost_breakdown.valley_cost)}</span>
+                                </div>
+                              )}
+                              <div className="flex justify-between">
+                                <span className="text-blue-600">服务费：</span>
+                                <span>{formatCurrency(estimation.cost_breakdown.service_cost)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* 时间建议 */}
+                        {timeSuggestions && timeSuggestions.length > 0 && (
+                          <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-3">
+                            <div className="text-xs font-medium text-green-700 dark:text-green-300 mb-2">
+                              💡 省钱提示
+                            </div>
+                            {timeSuggestions.map((suggestion, index) => (
+                              <div key={index} className="text-xs text-green-600 dark:text-green-400">
+                                {suggestion.description} ({suggestion.time_range})
+                                {suggestion.savings && (
+                                  <span className="ml-1">可节省 {suggestion.savings}%</span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
+                        {estimation?.error || '正在计算估算信息...'}
                       </div>
                     )}
                   </CardContent>
@@ -403,15 +565,76 @@ export default function ChargingRequestDialog({
                   <span>充电量：</span>
                   <span className="font-semibold">{requestData.requested_amount} kWh</span>
                 </div>
-                <div className="flex justify-between">
-                  <span>预计费用：</span>
-                  <span className="font-semibold text-green-600">¥{estimatedCost.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>预计等待：</span>
-                  <span className="font-semibold text-blue-600">{formatTimeEstimate(waitTime)}</span>
-                </div>
               </div>
+
+              {/* 使用estimation数据显示精确信息 */}
+              {estimation && !estimation.error && (
+                <div className="space-y-3">
+                  <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg">
+                    <div className="text-sm font-medium text-blue-700 dark:text-blue-300 mb-2">
+                      ⏰ 时间估算
+                    </div>
+                    <div className="space-y-1 text-sm">
+                      <div className="flex justify-between">
+                        <span>等待时间：</span>
+                        <span className="font-semibold text-amber-600">
+                          {estimation.summary.wait_time_display}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>充电时间：</span>
+                        <span className="font-semibold text-blue-600">
+                          {estimation.summary.charging_time_display}
+                        </span>
+                      </div>
+                      <div className="flex justify-between border-t pt-1">
+                        <span className="font-medium">总用时：</span>
+                        <span className="font-bold">{estimation.summary.total_time_display}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-green-50 dark:bg-green-900/20 p-3 rounded-lg">
+                    <div className="text-sm font-medium text-green-700 dark:text-green-300 mb-2">
+                      💰 费用估算
+                    </div>
+                    <div className="space-y-1 text-sm">
+                      {estimation.cost_breakdown && (
+                        <>
+                          {estimation.cost_breakdown.peak_cost > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-red-600">峰时：</span>
+                              <span>{formatCurrency(estimation.cost_breakdown.peak_cost)}</span>
+                            </div>
+                          )}
+                          {estimation.cost_breakdown.normal_cost > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-yellow-600">平时：</span>
+                              <span>{formatCurrency(estimation.cost_breakdown.normal_cost)}</span>
+                            </div>
+                          )}
+                          {estimation.cost_breakdown.valley_cost > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-green-600">谷时：</span>
+                              <span>{formatCurrency(estimation.cost_breakdown.valley_cost)}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between">
+                            <span className="text-blue-600">服务费：</span>
+                            <span>{formatCurrency(estimation.cost_breakdown.service_cost)}</span>
+                          </div>
+                        </>
+                      )}
+                      <div className="flex justify-between border-t pt-1">
+                        <span className="font-medium">总费用：</span>
+                        <span className="font-bold text-green-600 text-lg">
+                          {formatCurrency(estimation.summary.total_cost)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
               
               <p className="text-sm text-gray-600 dark:text-gray-400">
                 提交后系统将为您智能分配充电桩，请保持车辆准备状态。

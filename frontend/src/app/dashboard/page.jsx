@@ -46,7 +46,7 @@ export default function DashboardPage() {
   const fetchSystemStatus = async () => {
     try {
       const [queueData, pilesData] = await Promise.all([
-        chargingAPI.getQueueStatus(),
+        chargingAPI.getEnhancedQueueStatus(), // 使用增强的队列状态API
         chargingAPI.getPilesStatus()
       ]);
 
@@ -220,32 +220,53 @@ export default function DashboardPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-                <motion.div 
-                  className="grid grid-cols-1 md:grid-cols-3 gap-4"
-                  variants={containerVariants}
-                  initial="hidden"
-                  animate="visible"
-                >
-                  <motion.div variants={itemVariants}>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">队列号</p>
-                    <p className="text-lg font-semibold text-gray-900 dark:text-white">
-                      <AnimatedNumber value={userRequest.queue_number} />
-                    </p>
-                  </motion.div>
-                  <motion.div variants={itemVariants}>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">当前状态</p>
-                  <Badge variant={userRequest.current_status === 'charging' ? 'default' : 'secondary'}>
-                    {userRequest.current_status === 'waiting' ? '等待中' : 
-                     userRequest.current_status === 'charging' ? '充电中' : '已完成'}
-                  </Badge>
-                  </motion.div>
-                  <motion.div variants={itemVariants}>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">预计等待时间</p>
-                    <p className="text-lg font-semibold text-gray-900 dark:text-white">
-                      <AnimatedNumber value={userRequest.estimated_wait_time} /> 分钟
-                    </p>
-                  </motion.div>
+                              <motion.div 
+                className="grid grid-cols-1 md:grid-cols-4 gap-4"
+                variants={containerVariants}
+                initial="hidden"
+                animate="visible"
+              >
+                <motion.div variants={itemVariants}>
+                <p className="text-sm text-gray-600 dark:text-gray-400">队列号</p>
+                  <p className="text-lg font-semibold text-gray-900 dark:text-white">
+                    {userRequest.queue_number || '未分配'}
+                  </p>
                 </motion.div>
+                <motion.div variants={itemVariants}>
+                <p className="text-sm text-gray-600 dark:text-gray-400">当前状态</p>
+                <Badge variant={userRequest.current_status === 'charging' ? 'default' : 'secondary'}>
+                  {userRequest.current_status === 'waiting' ? '等待中' : 
+                   userRequest.current_status === 'charging' ? '充电中' : '已完成'}
+                </Badge>
+                </motion.div>
+                <motion.div variants={itemVariants}>
+                <p className="text-sm text-gray-600 dark:text-gray-400">队列位置</p>
+                  <div className="flex flex-col">
+                    <p className="text-lg font-semibold text-gray-900 dark:text-white">
+                      {userRequest.queue_level === 'external_waiting' ? '🚪 外部等候区' : 
+                       userRequest.queue_level === 'pile_queue' ? '🔌 桩队列' : 
+                       userRequest.queue_level === 'charging' ? '⚡ 充电中' : '待分配'}
+                    </p>
+                    {(userRequest.external_queue_position || userRequest.pile_queue_position) && (
+                      <p className="text-sm text-gray-500 dark:text-gray-400">
+                        第 {userRequest.external_queue_position || userRequest.pile_queue_position} 位
+                        {userRequest.charging_pile && ` (${userRequest.charging_pile})`}
+                      </p>
+                    )}
+                    {userRequest.queue_info && (
+                      <p className="text-sm text-gray-500 dark:text-gray-400">
+                        {userRequest.queue_info.description}
+                      </p>
+                    )}
+                  </div>
+                </motion.div>
+                <motion.div variants={itemVariants}>
+                <p className="text-sm text-gray-600 dark:text-gray-400">预计等待时间</p>
+                  <p className="text-lg font-semibold text-gray-900 dark:text-white">
+                    <AnimatedNumber value={userRequest.estimated_wait_time} /> 分钟
+                  </p>
+                </motion.div>
+              </motion.div>
               
               {userRequest.current_status === 'charging' && (
                   <motion.div 
@@ -340,7 +361,7 @@ export default function DashboardPage() {
           <motion.div variants={itemVariants}>
             <Card className="hover:shadow-lg transition-shadow duration-300">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">快充排队</CardTitle>
+              <CardTitle className="text-sm font-medium">快充桩队列</CardTitle>
                 <motion.div
                   animate={{ rotate: 360 }}
                   transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
@@ -355,9 +376,12 @@ export default function DashboardPage() {
                   animate={{ scale: 1 }}
                   transition={{ duration: 0.5, delay: 0.4 }}
                 >
-                  <AnimatedNumber value={queueStatus?.fast_charging?.waiting_count || 0} />
+                  <AnimatedNumber value={queueStatus?.pile_queues?.fast?.total_count || 0} />
                 </motion.div>
-              <p className="text-xs text-muted-foreground">人正在等待</p>
+              <p className="text-xs text-muted-foreground">
+                等待: {queueStatus?.pile_queues?.fast?.waiting_count || 0} | 
+                充电: {queueStatus?.pile_queues?.fast?.charging_count || 0}
+              </p>
             </CardContent>
           </Card>
           </motion.div>
@@ -365,7 +389,7 @@ export default function DashboardPage() {
           <motion.div variants={itemVariants}>
             <Card className="hover:shadow-lg transition-shadow duration-300">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">慢充排队</CardTitle>
+              <CardTitle className="text-sm font-medium">慢充桩队列</CardTitle>
               <Battery className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -375,9 +399,12 @@ export default function DashboardPage() {
                   animate={{ scale: 1 }}
                   transition={{ duration: 0.5, delay: 0.5 }}
                 >
-                  <AnimatedNumber value={queueStatus?.slow_charging?.waiting_count || 0} />
+                  <AnimatedNumber value={queueStatus?.pile_queues?.slow?.total_count || 0} />
                 </motion.div>
-              <p className="text-xs text-muted-foreground">人正在等待</p>
+              <p className="text-xs text-muted-foreground">
+                等待: {queueStatus?.pile_queues?.slow?.waiting_count || 0} | 
+                充电: {queueStatus?.pile_queues?.slow?.charging_count || 0}
+              </p>
             </CardContent>
           </Card>
           </motion.div>
@@ -385,7 +412,7 @@ export default function DashboardPage() {
           <motion.div variants={itemVariants}>
             <Card className="hover:shadow-lg transition-shadow duration-300">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">等候区状态</CardTitle>
+              <CardTitle className="text-sm font-medium">外部等候区</CardTitle>
               <Users className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -395,10 +422,12 @@ export default function DashboardPage() {
                   animate={{ scale: 1 }}
                   transition={{ duration: 0.5, delay: 0.6 }}
                 >
-                  <AnimatedNumber value={queueStatus?.waiting_area_capacity?.current || 0} />/
-                  <AnimatedNumber value={queueStatus?.waiting_area_capacity?.max || 10} />
+                  <AnimatedNumber value={queueStatus?.external_queue?.total_count || 0} />
                 </motion.div>
-              <p className="text-xs text-muted-foreground">当前/最大容量</p>
+              <p className="text-xs text-muted-foreground">
+                快充: {queueStatus?.external_queue?.fast_count || 0} 人 | 
+                慢充: {queueStatus?.external_queue?.slow_count || 0} 人
+              </p>
             </CardContent>
           </Card>
           </motion.div>
@@ -529,33 +558,81 @@ export default function DashboardPage() {
           </TabsContent>
 
           <TabsContent value="queue" className="space-y-4">
+            {/* 外部等候区 */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center">
+                  <Users className="mr-2 h-5 w-5 text-purple-600 dark:text-purple-400" />
+                  🚪 外部等候区
+                </CardTitle>
+                <CardDescription>
+                  当前有 {queueStatus?.external_queue?.total_count || 0} 人在外部等候区等待
+                  （快充: {queueStatus?.external_queue?.fast_count || 0} 人，慢充: {queueStatus?.external_queue?.slow_count || 0} 人）
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {queueStatus?.external_queue?.requests?.length > 0 ? (
+                    queueStatus.external_queue.requests.map((item) => (
+                      <div key={item.queue_number} className="flex items-center justify-between p-3 bg-purple-50 dark:bg-purple-900/20 rounded border border-purple-200 dark:border-purple-700">
+                        <div className="flex items-center space-x-3">
+                          <Badge variant="outline" className="border-purple-300 text-purple-700 dark:text-purple-300">
+                            #{item.queue_position}
+                          </Badge>
+                          <span className="font-medium text-gray-900 dark:text-white">{item.queue_number}</span>
+                          <Badge variant={item.charging_mode === 'fast' ? 'default' : 'secondary'}>
+                            {item.charging_mode === 'fast' ? '快充' : '慢充'}
+                          </Badge>
+                        </div>
+                        <span className="text-sm text-gray-600 dark:text-gray-400">
+                          预计等待 {item.estimated_wait_time} 分钟
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-center text-gray-500 dark:text-gray-400 py-4">外部等候区暂无排队用户</p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* 桩队列 */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center">
                     <Zap className="mr-2 h-5 w-5 text-blue-600 dark:text-blue-400" />
-                    快充排队详情
+                    🔌 快充桩队列
                   </CardTitle>
                   <CardDescription>
-                    当前有 {queueStatus?.fast_charging?.waiting_count || 0} 人等待快充
+                    桩队列有 {queueStatus?.pile_queues?.fast?.waiting_count || 0} 人等待，
+                    {queueStatus?.pile_queues?.fast?.charging_count || 0} 人正在充电
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-3">
-                    {queueStatus?.fast_charging?.queue_list?.length > 0 ? (
-                      queueStatus.fast_charging.queue_list.map((item, index) => (
-                        <div key={item.queue_number} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800/50 rounded">
+                    {queueStatus?.pile_queues?.fast?.requests?.length > 0 ? (
+                      queueStatus.pile_queues.fast.requests.map((item) => (
+                        <div key={item.queue_number} className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-700">
                           <div className="flex items-center space-x-3">
-                            <Badge variant="outline">#{index + 1}</Badge>
+                            <Badge variant="outline" className="border-blue-300 text-blue-700 dark:text-blue-300">
+                              #{item.queue_position}
+                            </Badge>
                             <span className="font-medium text-gray-900 dark:text-white">{item.queue_number}</span>
+                            <Badge variant={item.status === 'charging' ? 'default' : 'secondary'}>
+                              {item.status === 'charging' ? '充电中' : '等待中'}
+                            </Badge>
+                            {item.pile_id && (
+                              <Badge variant="outline">{item.pile_id}</Badge>
+                            )}
                           </div>
                           <span className="text-sm text-gray-600 dark:text-gray-400">
-                            预计等待 {item.estimated_wait_time} 分钟
+                            {item.estimated_wait_time > 0 ? `预计等待 ${item.estimated_wait_time} 分钟` : '正在充电'}
                           </span>
                         </div>
                       ))
                     ) : (
-                      <p className="text-center text-gray-500 dark:text-gray-400 py-4">暂无排队用户</p>
+                      <p className="text-center text-gray-500 dark:text-gray-400 py-4">快充桩队列暂无用户</p>
                     )}
                   </div>
                 </CardContent>
@@ -565,28 +642,37 @@ export default function DashboardPage() {
                 <CardHeader>
                   <CardTitle className="flex items-center">
                     <Battery className="mr-2 h-5 w-5 text-green-600 dark:text-green-400" />
-                    慢充排队详情
+                    🔌 慢充桩队列
                   </CardTitle>
                   <CardDescription>
-                    当前有 {queueStatus?.slow_charging?.waiting_count || 0} 人等待慢充
+                    桩队列有 {queueStatus?.pile_queues?.slow?.waiting_count || 0} 人等待，
+                    {queueStatus?.pile_queues?.slow?.charging_count || 0} 人正在充电
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-3">
-                    {queueStatus?.slow_charging?.queue_list?.length > 0 ? (
-                      queueStatus.slow_charging.queue_list.map((item, index) => (
-                        <div key={item.queue_number} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800/50 rounded">
+                    {queueStatus?.pile_queues?.slow?.requests?.length > 0 ? (
+                      queueStatus.pile_queues.slow.requests.map((item) => (
+                        <div key={item.queue_number} className="flex items-center justify-between p-3 bg-green-50 dark:bg-green-900/20 rounded border border-green-200 dark:border-green-700">
                           <div className="flex items-center space-x-3">
-                            <Badge variant="outline">#{index + 1}</Badge>
+                            <Badge variant="outline" className="border-green-300 text-green-700 dark:text-green-300">
+                              #{item.queue_position}
+                            </Badge>
                             <span className="font-medium text-gray-900 dark:text-white">{item.queue_number}</span>
+                            <Badge variant={item.status === 'charging' ? 'default' : 'secondary'}>
+                              {item.status === 'charging' ? '充电中' : '等待中'}
+                            </Badge>
+                            {item.pile_id && (
+                              <Badge variant="outline">{item.pile_id}</Badge>
+                            )}
                           </div>
                           <span className="text-sm text-gray-600 dark:text-gray-400">
-                            预计等待 {item.estimated_wait_time} 分钟
+                            {item.estimated_wait_time > 0 ? `预计等待 ${item.estimated_wait_time} 分钟` : '正在充电'}
                           </span>
                         </div>
                       ))
                     ) : (
-                      <p className="text-center text-gray-500 dark:text-gray-400 py-4">暂无排队用户</p>
+                      <p className="text-center text-gray-500 dark:text-gray-400 py-4">慢充桩队列暂无用户</p>
                     )}
                   </div>
                 </CardContent>

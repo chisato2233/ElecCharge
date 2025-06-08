@@ -49,52 +49,56 @@ python manage.py makemigrations
 echo "🔄 执行数据库迁移..."
 python manage.py migrate
 
-echo "🔄 初始化和重置系统参数..."
-# 检查是否已有参数数据，如果没有则自动确认重置
-PARAM_COUNT=$(python manage.py shell -c "
-from charging.models import SystemParameter
-try:
-    count = SystemParameter.objects.count()
-    print(count)
-except Exception:
-    print(0)
-")
-
-if [ "$PARAM_COUNT" -eq 0 ]; then
-    echo "📝 首次部署，自动初始化系统参数..."
-    python manage.py reset_system_parameters --confirm
-else
-    echo "📋 发现已有 $PARAM_COUNT 个系统参数"
-    echo "🔍 检查参数系统完整性..."
-    
-    # 检查是否有新的统一命名参数
-    HAS_NEW_PARAMS=$(python manage.py shell -c "
-from charging.models import SystemParameter
-try:
-    # 检查是否有新的统一命名参数
-    new_param = SystemParameter.objects.filter(param_key='fast_charging_pile_num').exists()
-    old_param = SystemParameter.objects.filter(param_key='FastChargingPileNum').exists()
-    print('new' if new_param else ('old' if old_param else 'none'))
-except Exception:
-    print('none')
-")
-    
-    if [ "$HAS_NEW_PARAMS" = "old" ]; then
-        echo "🔄 检测到旧参数格式，执行参数系统升级..."
-        python manage.py reset_system_parameters --confirm
-    elif [ "$HAS_NEW_PARAMS" = "new" ]; then
-        echo "✅ 参数系统已是最新格式"
-    else
-        echo "⚠️  参数系统异常，重新初始化..."
-        python manage.py reset_system_parameters --confirm
-    fi
-fi
-
-echo "🧪 验证参数管理系统..."
-python manage.py test_new_parameters
-
-echo "🔍 检查系统参数完整性..."
+echo "🔄 初始化系统参数..."
+# 检查系统参数完整性并自动修复
 python manage.py check_system_parameters --fix --verbose
+
+# 检查是否需要重置参数（首次部署或参数不完整）
+PARAM_STATUS=$(python manage.py shell -c "
+from charging.models import SystemParameter
+try:
+    # 检查是否有新的统一命名参数
+    new_param_count = SystemParameter.objects.filter(param_key__contains='_').count()
+    old_param_count = SystemParameter.objects.exclude(param_key__contains='_').count()
+    total_count = SystemParameter.objects.count()
+    
+    if total_count == 0:
+        print('empty')
+    elif new_param_count >= 10:  # 有足够的新格式参数
+        print('updated')
+    elif old_param_count > 0:  # 有旧格式参数
+        print('old_format')
+    else:
+        print('incomplete')
+except Exception:
+    print('error')
+")
+    
+case "$PARAM_STATUS" in
+    "empty")
+        echo "📝 首次部署，初始化系统参数..."
+        python manage.py reset_system_parameters --confirm
+        ;;
+    "old_format")
+        echo "🔄 检测到旧参数格式，升级参数系统..."
+        python manage.py reset_system_parameters --confirm
+        ;;
+    "incomplete")
+        echo "⚠️  参数系统不完整，重新初始化..."
+        python manage.py reset_system_parameters --confirm
+        ;;
+    "updated")
+        echo "✅ 参数系统已是最新格式"
+        ;;
+    *)
+        echo "❌ 参数系统检查异常，重新初始化..."
+        python manage.py reset_system_parameters --confirm
+        ;;
+esac
+
+echo "🔧 同步充电桩状态..."
+# 手动执行充电桩同步（Docker环境下确保同步）
+python manage.py sync_charging_piles --verbosity=1
 
 echo "👤 创建超级用户(如果不存在)..."
 python manage.py shell -c "
@@ -180,14 +184,21 @@ echo "   - 管理后台: http://localhost:8000/admin/"
 echo "📋 服务状态:"
 echo "   - 充电进度守护进程: PID $CHARGING_PID"
 echo "   - 日志文件: /var/log/charging_progress.log"
-echo "   - 参数管理系统: 已启用新版本 v2.0.0"
+echo "   - 参数管理系统: 新版本 v2.0.0 (统一命名)"
+echo "   - 充电桩同步: 已完成，运行时自动同步"
 echo "   - 故障检测系统: 已启用"
 echo ""
 echo "🧪 故障测试命令:"
-echo "   docker exec <container_name> python manage.py simulate_pile_fault FC001 --action fault"
-echo "   docker exec <container_name> python manage.py simulate_pile_fault FC001 --action recover"
+echo "   docker exec <container_name> python manage.py simulate_pile_fault FAST-001 --action fault"
+echo "   docker exec <container_name> python manage.py simulate_pile_fault FAST-001 --action recover"
+echo ""
+echo "🔧 管理命令:"
+echo "   docker exec <container_name> python manage.py sync_charging_piles --dry-run"
+echo "   docker exec <container_name> python manage.py show_status"
+echo "   docker exec <container_name> python manage.py reset_system_parameters --confirm"
 
 # 最后显示系统状态
+echo ""
 echo "📊 === 系统启动完成状态 ==="
 python manage.py show_status
 

@@ -14,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useState } from 'react';
+import NotificationDropdown from '@/components/layout/NotificationDropdown';
 
 // 导入页面组件
 import DashboardContent from './dashboard/page';
@@ -157,6 +158,9 @@ export default function MainApp() {
               <span className="text-sm text-gray-700 dark:text-gray-300 hidden lg:block">
                 欢迎，{user?.username || '用户'}
               </span>
+              
+              {/* 通知按钮 */}
+              <NotificationDropdown />
               
               {/* 主题切换按钮 */}
               <Button

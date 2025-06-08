@@ -7,6 +7,8 @@ class ChargingRequestSerializer(serializers.ModelSerializer):
     queue_info = serializers.SerializerMethodField()
     estimated_charging_time = serializers.SerializerMethodField()
     time_estimates = serializers.SerializerMethodField()
+    session_info = serializers.SerializerMethodField()
+    pile_info = serializers.SerializerMethodField()
     
     class Meta:
         model = ChargingRequest
@@ -14,13 +16,13 @@ class ChargingRequestSerializer(serializers.ModelSerializer):
                  'battery_capacity', 'current_status', 'queue_level',
                  'external_queue_position', 'pile_queue_position',
                  'estimated_wait_time', 'estimated_charging_time', 'time_estimates',
-                 'charging_pile', 'start_time', 'current_amount', 'created_at', 
-                 'vehicle', 'vehicle_info', 'queue_info']
+                 'charging_pile', 'start_time', 'end_time', 'current_amount', 'created_at', 'updated_at',
+                 'vehicle', 'vehicle_info', 'queue_info', 'session_info', 'pile_info']
         read_only_fields = ['id', 'queue_number', 'queue_level',
                            'external_queue_position', 'pile_queue_position',
                            'estimated_wait_time', 'estimated_charging_time', 'time_estimates',
-                           'charging_pile', 'start_time', 'current_amount', 'created_at', 
-                           'vehicle_info', 'queue_info']
+                           'charging_pile', 'start_time', 'end_time', 'current_amount', 'created_at', 'updated_at',
+                           'vehicle_info', 'queue_info', 'session_info', 'pile_info']
     
     def get_vehicle_info(self, obj):
         if obj.vehicle:
@@ -95,6 +97,37 @@ class ChargingRequestSerializer(serializers.ModelSerializer):
             info['description'] = '充电已完成'
         
         return info
+    
+    def get_session_info(self, obj):
+        """获取会话信息（费用等）"""
+        if hasattr(obj, 'session') and obj.session:
+            session = obj.session
+            return {
+                'id': str(session.id),
+                'charging_amount': session.charging_amount,
+                'charging_duration': session.charging_duration,
+                'peak_cost': float(session.peak_cost),
+                'normal_cost': float(session.normal_cost),
+                'valley_cost': float(session.valley_cost),
+                'service_cost': float(session.service_cost),
+                'total_cost': float(session.total_cost),
+                'peak_hours': session.peak_hours,
+                'normal_hours': session.normal_hours,
+                'valley_hours': session.valley_hours,
+            }
+        return None
+    
+    def get_pile_info(self, obj):
+        """获取充电桩信息"""
+        if obj.charging_pile:
+            return {
+                'pile_id': obj.charging_pile.pile_id,
+                'pile_type': obj.charging_pile.pile_type,
+                'pile_type_display': '快充' if obj.charging_pile.pile_type == 'fast' else '慢充',
+                'charging_power': obj.charging_pile.charging_power,
+                'status': obj.charging_pile.status
+            }
+        return None
 
 class ChargingRequestCreateSerializer(serializers.ModelSerializer):
     vehicle_id = serializers.IntegerField(write_only=True, required=True)

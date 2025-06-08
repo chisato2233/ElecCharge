@@ -277,6 +277,7 @@ class Notification(models.Model):
         ('charging_complete', '充电完成'),
         ('pile_fault', '充电桩故障'),
         ('queue_transfer', '转入桩队列'),
+        ('charging_mode_change', '充电类型变更'),
     ]
     
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')

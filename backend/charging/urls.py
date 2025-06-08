@@ -12,6 +12,7 @@ urlpatterns = [
     path('request/', views.ChargingRequestView.as_view(), name='charging_request'),
     path('request/<uuid:request_id>/', views.modify_charging_request, name='modify_request'),
     path('request/<uuid:request_id>/cancel/', views.cancel_charging_request, name='cancel_request'),
+    path('request/<uuid:request_id>/change-mode/', views.change_charging_mode, name='change_charging_mode'),
     path('request/status/', views.charging_request_status, name='request_status'),
     path('requests/active/', views.active_charging_requests, name='active_requests'),
     path('complete/', views.complete_charging, name='complete_charging'),

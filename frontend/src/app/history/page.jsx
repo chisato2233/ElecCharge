@@ -644,16 +644,16 @@ export default function HistoryPage() {
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell>{record.pile.pile_id}</TableCell>
+                          <TableCell>{record.pile_info?.pile_id || '未知'}</TableCell>
                           <TableCell>
-                            <Badge variant={record.pile.pile_type === 'fast' ? 'default' : 'secondary'}>
-                              {record.pile.pile_type === 'fast' ? '快充' : '慢充'}
+                            <Badge variant={record.charging_mode === 'fast' ? 'default' : 'secondary'}>
+                              {record.charging_mode === 'fast' ? '快充' : '慢充'}
                             </Badge>
                           </TableCell>
-                          <TableCell>{record.charging_amount.toFixed(1)} kWh</TableCell>
-                          <TableCell>{formatDuration(record.charging_duration)}</TableCell>
+                          <TableCell>{record.current_amount.toFixed(1)} kWh</TableCell>
+                          <TableCell>{formatDuration(record.session_info?.charging_duration || 0)}</TableCell>
                           <TableCell className="font-semibold">
-                            {formatCurrency(record.total_cost)}
+                            {formatCurrency(record.session_info?.total_cost || 0)}
                           </TableCell>
                           <TableCell>
                             <DropdownMenu>
@@ -788,12 +788,12 @@ export default function HistoryPage() {
                     <div className="space-y-2 text-sm">
                       <div className="flex justify-between">
                         <span className="text-gray-600 dark:text-gray-400">充电桩：</span>
-                        <span>{selectedRecord.pile.pile_id}</span>
+                        <span>{selectedRecord.pile_info?.pile_id || '未知'}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-600 dark:text-gray-400">充电模式：</span>
-                        <Badge variant={selectedRecord.pile.pile_type === 'fast' ? 'default' : 'secondary'}>
-                          {selectedRecord.pile.pile_type === 'fast' ? '快充' : '慢充'}
+                        <Badge variant={selectedRecord.charging_mode === 'fast' ? 'default' : 'secondary'}>
+                          {selectedRecord.charging_mode === 'fast' ? '快充' : '慢充'}
                         </Badge>
                       </div>
                       <div className="flex justify-between">
@@ -812,11 +812,11 @@ export default function HistoryPage() {
                     <div className="space-y-2 text-sm">
                       <div className="flex justify-between">
                         <span className="text-gray-600 dark:text-gray-400">充电量：</span>
-                        <span>{selectedRecord.charging_amount.toFixed(2)} kWh</span>
+                        <span>{selectedRecord.current_amount.toFixed(2)} kWh</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-600 dark:text-gray-400">充电时长：</span>
-                        <span>{formatDuration(selectedRecord.charging_duration)}</span>
+                        <span>{formatDuration(selectedRecord.session_info?.charging_duration || 0)}</span>
                       </div>
                     </div>
                   </div>
@@ -828,28 +828,28 @@ export default function HistoryPage() {
                     <div className="space-y-2">
                       <div className="flex justify-between">
                         <span className="text-gray-600 dark:text-gray-400">峰时费用：</span>
-                        <span>{formatCurrency(selectedRecord.peak_cost)}</span>
+                        <span>{formatCurrency(selectedRecord.session_info?.peak_cost || 0)}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-600 dark:text-gray-400">平时费用：</span>
-                        <span>{formatCurrency(selectedRecord.normal_cost)}</span>
+                        <span>{formatCurrency(selectedRecord.session_info?.normal_cost || 0)}</span>
                       </div>
                     </div>
                     <div className="space-y-2">
                       <div className="flex justify-between">
                         <span className="text-gray-600 dark:text-gray-400">谷时费用：</span>
-                        <span>{formatCurrency(selectedRecord.valley_cost)}</span>
+                        <span>{formatCurrency(selectedRecord.session_info?.valley_cost || 0)}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-600 dark:text-gray-400">服务费：</span>
-                        <span>{formatCurrency(selectedRecord.service_cost)}</span>
+                        <span>{formatCurrency(selectedRecord.session_info?.service_cost || 0)}</span>
                       </div>
                     </div>
                   </div>
                   <div className="mt-4 pt-4 border-t">
                     <div className="flex justify-between font-semibold">
                       <span>总费用：</span>
-                      <span className="text-lg">{formatCurrency(selectedRecord.total_cost)}</span>
+                      <span className="text-lg">{formatCurrency(selectedRecord.session_info?.total_cost || 0)}</span>
                     </div>
                   </div>
                 </div>
@@ -975,7 +975,7 @@ function StatisticsView({ statistics, onRefresh, loading }) {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              <AnimatedNumber value={stats.avg_sessions_per_week} precision={1} />
+              <AnimatedNumber value={stats.avg_requests_per_week} precision={1} />
             </div>
             <p className="text-xs text-muted-foreground">次/周</p>
           </CardContent>
@@ -990,18 +990,18 @@ function StatisticsView({ statistics, onRefresh, loading }) {
         <CardContent>
           <div className="space-y-4">
             {stats.mode_statistics.map((mode) => (
-              <div key={mode.mode} className="space-y-2">
+              <div key={mode.charging_mode} className="space-y-2">
                 <div className="flex justify-between items-center">
-                  <span className="font-medium">{mode.mode_name}</span>
+                  <span className="font-medium">{mode.mode_display}</span>
                   <span className="text-sm text-gray-600">
-                    <AnimatedPercentage value={mode.percentage} precision={1} />
+                    <AnimatedPercentage value={(mode.count / stats.mode_statistics.reduce((sum, m) => sum + m.count, 0)) * 100} precision={1} />
                   </span>
                 </div>
-                <Progress value={mode.percentage} className="h-2" />
+                <Progress value={(mode.count / stats.mode_statistics.reduce((sum, m) => sum + m.count, 0)) * 100} className="h-2" />
                 <div className="flex justify-between text-sm text-gray-600">
                   <span><AnimatedNumber value={mode.count} />次</span>
-                  <span><AnimatedNumber value={mode.total_amount} precision={1} /> kWh</span>
-                  <span>¥<AnimatedNumber value={mode.total_cost} precision={2} /></span>
+                  <span><AnimatedNumber value={mode.total_amount || 0} precision={1} /> kWh</span>
+                  <span>¥<AnimatedNumber value={mode.total_cost || 0} precision={2} /></span>
                 </div>
               </div>
             ))}

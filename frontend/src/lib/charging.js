@@ -32,11 +32,18 @@ export const chargingAPI = {
     }
   },
   
-  cancelRequest: async (requestId) => {
+    cancelRequest: async (requestId) => {
     const response = await api.delete(`/charging/request/${requestId}/cancel/`);
     return response.data;
   },
-  
+
+  changeChargingMode: async (requestId, newMode) => {
+    const response = await api.post(`/charging/request/${requestId}/change-mode/`, {
+      charging_mode: newMode
+    });
+    return response.data;
+  },
+
   completeCharging: async (requestId) => {
     const response = await api.post('/charging/complete/', { request_id: requestId });
     return response.data;

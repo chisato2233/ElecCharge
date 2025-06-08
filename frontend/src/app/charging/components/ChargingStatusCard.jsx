@@ -114,6 +114,23 @@ function SingleRequestCard({ request, onRequestUpdate }) {
     }
   };
 
+  const handleChangeChargingMode = async () => {
+    try {
+      const newMode = request.charging_mode === 'fast' ? 'slow' : 'fast';
+      const modeText = newMode === 'fast' ? '快充' : '慢充';
+      
+      const response = await chargingAPI.changeChargingMode(request.id, newMode);
+      if (response.success) {
+        toast.success(`充电类型已修改为${modeText}，新排队号：${response.data.queue_number}`);
+        onRequestUpdate();
+      }
+    } catch (error) {
+      console.error('修改充电类型失败:', error);
+      const errorMessage = error.response?.data?.error?.message || '修改充电类型失败';
+      toast.error(errorMessage);
+    }
+  };
+
   const queueLevelInfo = getQueueLevelInfo(request.queue_level, request.queue_status);
 
   return (
@@ -193,7 +210,7 @@ function SingleRequestCard({ request, onRequestUpdate }) {
                   <>
                     <div className="flex justify-between">
                       <span className="text-gray-600 dark:text-gray-400">充电桩：</span>
-                      <span className="font-semibold text-gray-900 dark:text-white">{request.charging_pile_id || 'N/A'}</span>
+                      <span className="font-semibold text-gray-900 dark:text-white">{request.charging_pile || 'N/A'}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-600 dark:text-gray-400">桩队列位置：</span>
@@ -258,7 +275,7 @@ function SingleRequestCard({ request, onRequestUpdate }) {
               <>
                 <div className="flex justify-between">
                   <span className="text-gray-600 dark:text-gray-400">充电桩：</span>
-                  <span className="font-semibold text-gray-900 dark:text-white">{request.charging_pile_id}</span>
+                  <span className="font-semibold text-gray-900 dark:text-white">{request.charging_pile}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600 dark:text-gray-400">已充电量：</span>
@@ -295,6 +312,17 @@ function SingleRequestCard({ request, onRequestUpdate }) {
         
         <div className="mt-6 flex justify-end space-x-3">
           {request.current_status === 'waiting' && (
+            <>
+              {/* 只有在外部等候区才显示修改充电类型按钮 */}
+              {request.queue_level === 'external_waiting' && (
+                <Button
+                  onClick={handleChangeChargingMode}
+                  variant="outline"
+                  className="text-blue-600 border-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                >
+                  改为{request.charging_mode === 'fast' ? '慢充' : '快充'}
+                </Button>
+              )}
             <Button
               onClick={handleCancelRequest}
               variant="outline"
@@ -302,6 +330,7 @@ function SingleRequestCard({ request, onRequestUpdate }) {
             >
               取消请求
             </Button>
+            </>
           )}
           
           {request.current_status === 'charging' && (

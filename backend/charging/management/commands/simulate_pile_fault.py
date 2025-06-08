@@ -1,205 +1,122 @@
 from django.core.management.base import BaseCommand
 from charging.models import ChargingPile, ChargingRequest
 from charging.services import AdvancedChargingQueueService
-from django.utils import timezone
 
 class Command(BaseCommand):
-    help = '模拟充电桩故障和恢复（用于测试故障处理功能）'
+    help = '模拟充电桩故障和恢复处理'
 
     def add_arguments(self, parser):
-        parser.add_argument(
-            'pile_id',
-            type=str,
-            help='充电桩ID'
-        )
-        parser.add_argument(
-            '--action',
-            type=str,
-            choices=['fault', 'recover', 'offline', 'online'],
-            default='fault',
-            help='操作类型：fault(故障), recover(恢复), offline(离线), online(上线)'
-        )
-        parser.add_argument(
-            '--auto-recover',
-            type=int,
-            help='自动恢复时间（秒），设置后将在指定时间后自动恢复'
-        )
+        parser.add_argument('action', choices=['fault', 'recover'], help='故障操作类型')
+        parser.add_argument('pile_id', type=str, help='充电桩ID')
 
     def handle(self, *args, **options):
-        pile_id = options['pile_id']
         action = options['action']
-        auto_recover = options['auto_recover']
-
+        pile_id = options['pile_id']
+        
         try:
             pile = ChargingPile.objects.get(pile_id=pile_id)
         except ChargingPile.DoesNotExist:
-            self.stdout.write(
-                self.style.ERROR(f'❌ 充电桩 {pile_id} 不存在')
-            )
+            self.stdout.write(self.style.ERROR(f'充电桩 {pile_id} 不存在'))
             return
-
-        self.stdout.write(f'🔧 开始处理充电桩 {pile_id}...')
         
-        # 显示当前状态
-        self.show_pile_status(pile)
+        service = AdvancedChargingQueueService()
         
-        # 执行操作
         if action == 'fault':
-            self.simulate_fault(pile)
+            self.simulate_fault(pile, service)
         elif action == 'recover':
-            self.simulate_recovery(pile)
-        elif action == 'offline':
-            self.simulate_offline(pile)
-        elif action == 'online':
-            self.simulate_online(pile)
+            self.simulate_recovery(pile, service)
 
-        # 显示操作后状态
-        pile.refresh_from_db()
-        self.show_pile_status(pile)
+    def simulate_fault(self, pile, service):
+        """模拟充电桩故障"""
+        self.stdout.write(f"=== 模拟充电桩 {pile.pile_id} 故障 ===")
         
-        # 自动恢复
-        if auto_recover and action in ['fault', 'offline']:
-            import time
-            self.stdout.write(f'⏰ 将在 {auto_recover} 秒后自动恢复...')
-            time.sleep(auto_recover)
-            
-            if action == 'fault':
-                self.simulate_recovery(pile)
-            elif action == 'offline':
-                self.simulate_online(pile)
-                
-            pile.refresh_from_db()
-            self.stdout.write('✅ 自动恢复完成')
-            self.show_pile_status(pile)
-
-    def show_pile_status(self, pile):
-        """显示充电桩当前状态"""
-        self.stdout.write('\n📊 === 充电桩状态 ===')
-        self.stdout.write(f'桩ID: {pile.pile_id}')
-        self.stdout.write(f'类型: {pile.get_pile_type_display()}')
-        self.stdout.write(f'状态: {pile.get_status_display()}')
-        self.stdout.write(f'工作中: {"是" if pile.is_working else "否"}')
+        # 检查当前状态
+        current_charging = ChargingRequest.objects.filter(
+            charging_pile=pile,
+            current_status='charging'
+        ).first()
         
-        # 显示当前充电用户
-        if pile.is_working:
-            current_request = ChargingRequest.objects.filter(
-                charging_pile=pile,
-                current_status='charging'
-            ).first()
-            if current_request:
-                progress = (current_request.current_amount / current_request.requested_amount) * 100
-                self.stdout.write(f'当前用户: {current_request.user.username} ({current_request.queue_number})')
-                self.stdout.write(f'充电进度: {progress:.1f}% ({current_request.current_amount:.2f}/{current_request.requested_amount:.2f} kWh)')
-
-        # 显示队列情况
         queue_requests = ChargingRequest.objects.filter(
             charging_pile=pile,
             queue_level='pile_queue'
         ).order_by('pile_queue_position')
         
-        if queue_requests.exists():
-            self.stdout.write(f'队列等待: {queue_requests.count()} 人')
-            for req in queue_requests[:3]:  # 显示前3个
-                self.stdout.write(f'  #{req.pile_queue_position}: {req.user.username} ({req.queue_number})')
-            if queue_requests.count() > 3:
-                self.stdout.write(f'  ...还有 {queue_requests.count() - 3} 人')
-        else:
-            self.stdout.write('队列等待: 无')
+        self.stdout.write(f"故障前状态:")
+        if current_charging:
+            self.stdout.write(f"  正在充电: {current_charging.queue_number} (用户: {current_charging.user.username})")
+        self.stdout.write(f"  队列等待: {queue_requests.count()} 人")
+        for req in queue_requests:
+            self.stdout.write(f"    - {req.queue_number} (位置: {req.pile_queue_position})")
         
-        self.stdout.write('=' * 30)
-
-    def simulate_fault(self, pile):
-        """模拟充电桩故障"""
-        if pile.status == 'fault':
-            self.stdout.write(
-                self.style.WARNING(f'⚠️ 充电桩 {pile.pile_id} 已经处于故障状态')
-            )
-            return
-
-        self.stdout.write(
-            self.style.WARNING(f'🚨 模拟充电桩 {pile.pile_id} 发生故障...')
-        )
-        
-        # 更新状态
+        # 设置充电桩为故障状态
         pile.status = 'fault'
         pile.save()
         
-        # 手动调用故障处理（正常情况下由守护进程检测）
-        queue_service = AdvancedChargingQueueService()
-        queue_service.handle_pile_fault(pile)
+        # 执行故障处理
+        service.handle_pile_fault(pile)
         
-        self.stdout.write(
-            self.style.SUCCESS('✅ 故障模拟和处理完成')
-        )
+        self.stdout.write(self.style.SUCCESS(f"✅ 充电桩 {pile.pile_id} 故障处理完成"))
+        
+        # 显示故障后状态
+        self.show_queue_status_after_fault(pile)
 
-    def simulate_recovery(self, pile):
-        """模拟充电桩故障恢复"""
-        if pile.status == 'normal':
-            self.stdout.write(
-                self.style.WARNING(f'⚠️ 充电桩 {pile.pile_id} 已经处于正常状态')
-            )
+    def simulate_recovery(self, pile, service):
+        """模拟充电桩恢复"""
+        self.stdout.write(f"=== 模拟充电桩 {pile.pile_id} 恢复 ===")
+        
+        if pile.status != 'fault':
+            self.stdout.write(self.style.WARNING(f"充电桩 {pile.pile_id} 当前状态不是故障"))
             return
-
-        self.stdout.write(
-            self.style.SUCCESS(f'✅ 模拟充电桩 {pile.pile_id} 故障恢复...')
-        )
         
-        # 更新状态
+        # 设置充电桩为正常状态
         pile.status = 'normal'
         pile.save()
         
-        # 手动调用恢复处理
-        queue_service = AdvancedChargingQueueService()
-        queue_service.handle_pile_recovery(pile)
+        # 执行恢复处理
+        service.handle_pile_recovery(pile)
         
-        self.stdout.write(
-            self.style.SUCCESS('✅ 恢复模拟和处理完成')
-        )
+        self.stdout.write(self.style.SUCCESS(f"✅ 充电桩 {pile.pile_id} 恢复处理完成"))
+        
+        # 显示恢复后状态
+        self.show_system_status_after_recovery()
 
-    def simulate_offline(self, pile):
-        """模拟充电桩离线"""
-        if pile.status == 'offline':
-            self.stdout.write(
-                self.style.WARNING(f'⚠️ 充电桩 {pile.pile_id} 已经处于离线状态')
-            )
-            return
+    def show_queue_status_after_fault(self, pile):
+        """显示故障后的队列状态"""
+        self.stdout.write(f"\n故障后状态:")
+        
+        # 显示外部等候区状态
+        external_requests = ChargingRequest.objects.filter(
+            charging_mode=pile.pile_type,
+            queue_level='external_waiting'
+        ).order_by('external_queue_position')
+        
+        self.stdout.write(f"外部等候区 ({pile.pile_type}):")
+        for req in external_requests:
+            self.stdout.write(f"  - {req.queue_number} (位置: {req.external_queue_position}, 用户: {req.user.username})")
+        
+        # 检查是否暂停叫号
+        service = AdvancedChargingQueueService()
+        is_paused = service.is_external_queue_paused(pile.pile_type)
+        if is_paused:
+            self.stdout.write(self.style.WARNING(f"⚠️  {pile.pile_type} 外部等候区叫号已暂停"))
 
-        self.stdout.write(
-            self.style.WARNING(f'📴 模拟充电桩 {pile.pile_id} 离线...')
-        )
+    def show_system_status_after_recovery(self):
+        """显示恢复后的系统状态"""
+        self.stdout.write(f"\n系统状态:")
         
-        # 更新状态
-        pile.status = 'offline'
-        pile.save()
+        service = AdvancedChargingQueueService()
+        queue_status = service.get_enhanced_queue_status()
         
-        # 离线按故障处理
-        queue_service = AdvancedChargingQueueService()
-        queue_service.handle_pile_fault(pile)
+        # 显示外部等候区
+        external = queue_status.get('external_queue', {})
+        self.stdout.write(f"外部等候区: 总计 {external.get('total_count', 0)} 人")
+        self.stdout.write(f"  快充: {external.get('fast_count', 0)} 人")
+        self.stdout.write(f"  慢充: {external.get('slow_count', 0)} 人")
         
-        self.stdout.write(
-            self.style.SUCCESS('✅ 离线模拟和处理完成')
-        )
-
-    def simulate_online(self, pile):
-        """模拟充电桩上线"""
-        if pile.status == 'normal':
-            self.stdout.write(
-                self.style.WARNING(f'⚠️ 充电桩 {pile.pile_id} 已经处于正常状态')
-            )
-            return
-
-        self.stdout.write(
-            self.style.SUCCESS(f'🔌 模拟充电桩 {pile.pile_id} 重新上线...')
-        )
-        
-        # 更新状态
-        pile.status = 'normal'
-        pile.save()
-        
-        # 上线按恢复处理
-        queue_service = AdvancedChargingQueueService()
-        queue_service.handle_pile_recovery(pile)
-        
-        self.stdout.write(
-            self.style.SUCCESS('✅ 上线模拟和处理完成')
-        ) 
+        # 显示桩队列
+        pile_queues = queue_status.get('pile_queues', {})
+        for mode in ['fast', 'slow']:
+            mode_data = pile_queues.get(mode, {})
+            self.stdout.write(f"{mode.upper()}充桩队列: 总计 {mode_data.get('total_count', 0)} 人")
+            self.stdout.write(f"  等待: {mode_data.get('waiting_count', 0)} 人")
+            self.stdout.write(f"  充电: {mode_data.get('charging_count', 0)} 人") 

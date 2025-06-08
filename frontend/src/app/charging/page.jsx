@@ -67,7 +67,7 @@ export default function ChargingPage() {
   const fetchStatusData = async () => {
     try {
       const [queueRes, pilesRes] = await Promise.all([
-        chargingAPI.getQueueStatus(),
+        chargingAPI.getEnhancedQueueStatus(), // 使用增强队列状态API
         chargingAPI.getPilesStatus()
       ]);
       
@@ -217,11 +217,11 @@ export default function ChargingPage() {
             </Card>
             </motion.div>
 
-            {/* 快充队列 */}
+            {/* 快充桩队列 */}
             <motion.div variants={itemVariants}>
               <Card className="hover:shadow-lg transition-shadow duration-300">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">快充队列</CardTitle>
+                  <CardTitle className="text-sm font-medium">快充桩队列</CardTitle>
                   <Activity className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
@@ -231,20 +231,21 @@ export default function ChargingPage() {
                     animate={{ scale: 1 }}
                     transition={{ duration: 0.5, delay: 0.6 }}
                   >
-                    <AnimatedNumber value={queueStatus?.fast_charging?.waiting_count || 0} />
+                    <AnimatedNumber value={queueStatus?.pile_queues?.fast?.total_count || 0} />
                   </motion.div>
                   <p className="text-xs text-muted-foreground">
-                    正在充电: <AnimatedNumber value={queueStatus?.fast_charging?.charging_count || 0} />
+                    等待: <AnimatedNumber value={queueStatus?.pile_queues?.fast?.waiting_count || 0} /> | 
+                    充电: <AnimatedNumber value={queueStatus?.pile_queues?.fast?.charging_count || 0} />
                   </p>
               </CardContent>
             </Card>
             </motion.div>
 
-            {/* 慢充队列 */}
+            {/* 慢充桩队列 */}
             <motion.div variants={itemVariants}>
               <Card className="hover:shadow-lg transition-shadow duration-300">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">慢充队列</CardTitle>
+                  <CardTitle className="text-sm font-medium">慢充桩队列</CardTitle>
                 <Battery className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
@@ -254,10 +255,11 @@ export default function ChargingPage() {
                     animate={{ scale: 1 }}
                     transition={{ duration: 0.5, delay: 0.7 }}
                   >
-                    <AnimatedNumber value={queueStatus?.slow_charging?.waiting_count || 0} />
+                    <AnimatedNumber value={queueStatus?.pile_queues?.slow?.total_count || 0} />
                   </motion.div>
                   <p className="text-xs text-muted-foreground">
-                    正在充电: <AnimatedNumber value={queueStatus?.slow_charging?.charging_count || 0} />
+                    等待: <AnimatedNumber value={queueStatus?.pile_queues?.slow?.waiting_count || 0} /> | 
+                    充电: <AnimatedNumber value={queueStatus?.pile_queues?.slow?.charging_count || 0} />
                   </p>
               </CardContent>
             </Card>
@@ -277,11 +279,11 @@ export default function ChargingPage() {
                     animate={{ scale: 1 }}
                     transition={{ duration: 0.5, delay: 0.8 }}
                   >
-                    <AnimatedNumber value={queueStatus?.external_waiting?.total_count || 0} />
+                    <AnimatedNumber value={queueStatus?.external_queue?.total_count || 0} />
                   </motion.div>
                   <p className="text-xs text-muted-foreground">
-                    快充: <AnimatedNumber value={queueStatus?.external_waiting?.fast_count || 0} /> | 
-                    慢充: <AnimatedNumber value={queueStatus?.external_waiting?.slow_count || 0} />
+                    快充: <AnimatedNumber value={queueStatus?.external_queue?.fast_count || 0} /> | 
+                    慢充: <AnimatedNumber value={queueStatus?.external_queue?.slow_count || 0} />
                   </p>
               </CardContent>
             </Card>
